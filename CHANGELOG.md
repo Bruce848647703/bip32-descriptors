@@ -18,3 +18,22 @@ notes, which say what a user has to act on; this file is the record
 behind them.
 
 [std]: https://github.com/btclib-org/.github
+
+## v2026.10.31
+
+### The repository opens with btclib-wallet's bip32 and descriptors
+
+btclib-wallet's `bip32` and `descriptors` at 78e360b, with their tests,
+renamed to `bip32_descriptors`, around base58-bech32's repository files
+(issue btclib-org/.github#1811).
+
+### The prose describes this package
+
+The review bot's prompt, AUTHORS.md and a pypi-install comment describe
+this package, not base58-bech32; comments naming btclib-wallet's modules
+say they are btclib-wallet's (issue btclib-org/.github#1811).
+
+### The README shows the OpenSSF badges
+
+The Best Practices and Baseline badges of bestpractices.dev project
+16116, which RELEASING.md also reads at release.
