@@ -582,7 +582,7 @@ def fingerprint(xkey: BIP32Key) -> bytes:
     btclib-org/btclib#1188). Every reader of the four octets is this module's or
     sits above it -- `derive` below writes a parent's into each child it makes,
     `crack_prv_key_var` reads one back to tell whether a parent and a child are
-    that pair, and `psbt`'s origins carry one to name a master.
+    that pair, and btclib-wallet's psbt origins carry one to name a master.
 
     An xprv answers with its xpub's, the fingerprint being the public
     key's: a pair that gave two would identify one key twice. The
@@ -1017,7 +1017,8 @@ def _pub_key_tweak_chain(key: bytes) -> _PubKeyTweakChain:
 # aggregate key has to use the same one or derive other children. It sits
 # beside the tweaks below because it is the other half of one fact: the
 # derivation BIP328 defines is this chain code walked by that function,
-# and both `psbt.musig2` and a `musig()` descriptor key expression need it
+# and both btclib-wallet's `psbt.musig2` and a `musig()` descriptor key
+# expression need it
 BIP328_CHAIN_CODE = bytes.fromhex(
     "868087ca02a6f974c4598924c36b57762d32cb45717167e300622c7167e38965"
 )
@@ -1317,9 +1318,9 @@ def derive_from_account_(
 
     `derive_from_account` below is this with the Base58Check encoding on
     top; the trailing underscore is `rootxprv_from_seed_`'s, and says the
-    same thing. Which is the spelling a wallet wants: `key_wallet` and
-    `script_wallet` derive one of these per address, and an address is
-    built from the key rather than from its text.
+    same thing. Which is the spelling a wallet wants: btclib-wallet's
+    `key_wallet` and `script_wallet` derive one of these per address, and
+    an address is built from the key rather than from its text.
     """
     derived = _derive_from_account(
         key_data_from_bip32_key(mxkey),

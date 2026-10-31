@@ -2990,12 +2990,13 @@ class SpendContext:
     lock times the transaction being built will carry, which say whether
     an ``older()`` or an ``after()`` can be met at all.
 
-    The four preimage mappings are `PsbtIn`'s four, field for field, and
-    keyed the same way: the digest to the bytes that hash to it -- bytes
-    and not "bytes or hex", where the signatures of `satisfy` take either,
-    because these come from a psbt rather than from a keyboard. A psbt
-    carries them because BIP174 gave them fields, which is what lets
-    `psbt.miniscript_solver` build a context out of one.
+    The four preimage mappings are the four of btclib-wallet's `PsbtIn`,
+    field for field, and keyed the same way: the digest to the bytes that
+    hash to it -- bytes and not "bytes or hex", where the signatures of
+    `satisfy` take either, because these come from a psbt rather than from
+    a keyboard. A psbt carries them because BIP174 gave them fields, which
+    is what lets
+    btclib-wallet's `psbt.miniscript_solver` build a context out of one.
 
     `sequence` is the input's own, `locktime` the transaction's, and
     `version` matters for the same reason it matters to the interpreter:

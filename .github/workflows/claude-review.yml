@@ -77,13 +77,17 @@ jobs:
     with:
       # this tree's own paragraph, landing where the callee inserts it
       extra-prompt: |
-        This package is the Base58, Base58Check, bech32, bech32m, SS58
-        and CashAddr codecs, and its decoders read strings somebody else
-        hands it. A change that widens what a decoder accepts, drops a
-        checksum or length check, or makes an encoder's output differ
-        from its specification's vectors is a finding until its test says
-        otherwise, and so is an import of anything outside the standard
-        library. A rule that is stated
+        This package is BIP32 keys, output descriptors and miniscript,
+        built on btclib and ecc, and its parsers read keys, paths and
+        descriptors somebody else hands it. A change that widens what a
+        parser accepts beyond its specification, drops a checksum or
+        length check, changes what an existing descriptor, key or path
+        reads as, or makes an output differ from the vendored vectors
+        under tests/**/_data/ is a finding until its test says otherwise.
+        So is an import of anything other than the standard library,
+        btclib, ecc, typing_extensions and, behind a guard, the
+        btclib_secp256k1 bindings: REVIEWING.md's "This repository in
+        particular" has the rest. A rule that is stated
         without the reason that chose it, a claim no command re-derives, a
         count of anything, a second wording of a fact stated elsewhere, and
         a rule whose own repository does not keep it are the defects the

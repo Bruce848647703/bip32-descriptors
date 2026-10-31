@@ -135,8 +135,8 @@ jobs:
           python btclib-org-github/.github/scripts/install_published_release.py \
             "$package" "$TAG" -- \
             python -m pip install --no-cache-dir --verbose "$binary" "$package"
-      # a decode of each format rather than an import: an import runs
-      # `__init__.py` alone, and each codec is a lazily loaded module
+      # a root xprv derived from a seed and a descriptor checksummed, so
+      # that the installed bip32 and descriptors code runs, not only imports
       - name: Import the installed package, read its version, derive and checksum
         shell: bash
         run: |

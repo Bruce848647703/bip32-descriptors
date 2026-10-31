@@ -16,8 +16,8 @@ module-path = "src/bip32_descriptors/descriptors"
 
 # tests/descriptors alone, the directory of these modules' tests:
 # `--cov=src/bip32_descriptors/descriptors` over this command lists the lines it
-# leaves to the rest of the suite. wallet.toml mutates the wallet's side of what
-# a wallet asks a descriptor for.
+# leaves to the rest of the suite. btclib-wallet's wallet.toml mutates the
+# wallet's side of what a wallet asks a descriptor for.
 #
 # -n0 and -p no:randomly for the reasons btclib's sig_hash.toml gives: xdist's
 # worker per core is startup paid once per mutant, and with -x a shuffled

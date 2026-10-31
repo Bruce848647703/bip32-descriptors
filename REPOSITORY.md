@@ -78,8 +78,8 @@ gh api repos/btclib-org/bip32-descriptors \
 gh api -i repos/btclib-org/bip32-descriptors/pages 2>/dev/null | head -1
 ```
 
-`default_branch` already answers `main` on the empty repository; the
-`PATCH` above is what keeps it so once a branch is pushed.
+`default_branch` is expected to answer `main`; the `PATCH` above is
+what keeps it so once a branch is pushed.
 
 `has_issues` is what `CONTRIBUTING.md`'s *The issue tracker* rests on,
 and so does `.github/ISSUE_TEMPLATE/`. The Pages call answers `404`: this

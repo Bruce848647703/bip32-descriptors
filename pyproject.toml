@@ -36,7 +36,8 @@ dependencies = [
     # others) and which imports `ecc` in place of `btclib_ecc`
     "btclib>=2026.10.24",
     # the curve arithmetic and the schemes this tree imports directly:
-    # `ecc.curves`, `ecc.ecc.ssa` and `ecc.hashes`. The floor is
+    # `ecc.curves`, `ecc.curves.sec_point`, `ecc.ecc.musig2`, `ecc.ecc.ssa`
+    # and `ecc.hashes`. The floor is
     # btclib-wallet's, the release this code is tested against there: the
     # `deps-oldest` workflow resolves the lowest direct versions and runs
     # the suite on them

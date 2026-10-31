@@ -17,17 +17,18 @@ method of each rather than a dispatch table.
 the hash it committed to, that hash is a property of the spending
 transaction, and a descriptor has no transaction -- which is also why
 the signatures are a parameter rather than something this module makes.
-`psbt.finalize` does have one and does check, and builds the same
-bytes from a psbt carrying the same signatures.
+btclib-wallet's `psbt.finalize` does have one and does check, and builds
+the same bytes from a psbt carrying the same signatures.
 
 `expansion` is the third answer, and the one for a spend the signers do
 not make all at once: the scripts and the key origins BIP174's Updater
 writes into a psbt, for signers to fill in at their own pace and
-`psbt.finalize` to assemble. `psbt.update_psbt_input` and
-`psbt.update_psbt_output` are that Updater, and read the `Expansion`
-this returns. This module imports nothing of `psbt`, which is the
-direction of the layering: a psbt is a transaction being built, and a
-descriptor is what a wallet knows about the outputs it holds.
+btclib-wallet's `psbt.finalize` to assemble. btclib-wallet's
+`psbt.update_psbt_input` and `psbt.update_psbt_output` are that Updater,
+and read the `Expansion` this returns. This package imports nothing of
+btclib-wallet, which is the direction of the layering: a psbt is a
+transaction being built, and a descriptor is what a wallet knows about
+the outputs it holds.
 
 BIP380: https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki
 
@@ -681,7 +682,7 @@ def _aggregate_origin(
     BIP328's synthetic xpub, which is hash160 of the aggregate key -- and
     which is what lets a signer recognize the field as BIP328 derivation
     without a `PSBT_GLOBAL_XPUB` naming that synthetic key.
-    `psbt.musig2` reads it back exactly that way.
+    btclib-wallet's `psbt.musig2` reads it back exactly that way.
 
     The path is empty where the expression derives nothing, the key in the
     script being the aggregate itself: Bitcoin Core's `MuSigPubkeyProvider`
@@ -1044,10 +1045,10 @@ class Descriptor(ABC):
         """Return the script_sig and witness that spend the script at `index`.
 
         `signatures` maps a public key to the signature made with it,
-        which is the shape `psbt.PsbtIn.partial_sigs` has. Keyed by key
-        and not a sequence because the order the signatures go on the
-        stack is the descriptor's own knowledge -- the key order of a
-        ``multi()``, the sorted order of a ``sortedmulti()`` -- and a
+        which is the shape btclib-wallet's `psbt.PsbtIn.partial_sigs` has.
+        Keyed by key and not a sequence because the order the signatures
+        go on the stack is the descriptor's own knowledge -- the key order
+        of a ``multi()``, the sorted order of a ``sortedmulti()`` -- and a
         caller that had to know it would be building the script itself.
 
         Both halves come back and one of the two is always empty: a
@@ -1056,9 +1057,9 @@ class Descriptor(ABC):
 
         A signature short of what the script pops is an error and not a
         shorter answer. A 2-of-3 holding one signature is a psbt waiting
-        for the second, `psbt.PsbtIn.partial_sigs` is where that state
-        belongs, and bytes that do not spend would be a second and
-        weaker spelling of it.
+        for the second, btclib-wallet's `psbt.PsbtIn.partial_sigs` is where
+        that state belongs, and bytes that do not spend would be a second
+        and weaker spelling of it.
 
         `spend` is what a miniscript satisfaction reads beside the
         signatures -- hash preimages, and the lock times the transaction
@@ -2050,10 +2051,10 @@ class RawTrDescriptor(Descriptor):
         INTERNAL_KEY names the key a verifier tweaks and a ``rawtr()`` has
         none, so it has no merkle root and no leaf script either.
 
-        What that costs is `psbt.sign`, which signs a taproot input
-        through its internal key and therefore leaves this input alone
-        rather than tweaking a key it should not: an input with no
-        internal key is one that role skips.
+        What that costs is btclib-wallet's `psbt.sign`, which signs a
+        taproot input through its internal key and therefore leaves this
+        input alone rather than tweaking a key it should not: an input with
+        no internal key is one that role skips.
 
         BIP373's participant list is beside it where the key is a
         ``musig()``, as it is under a ``tr()``: an aggregate key that is

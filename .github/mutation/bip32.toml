@@ -18,7 +18,8 @@ timeout = 300
 
 excluded-modules = []
 
-# The `BitOr` exclusion wallet.toml explains and btclib's parsers.toml argues.
+# The `BitOr` exclusion btclib-wallet's wallet.toml explains and btclib's
+# parsers.toml argues.
 # Measured rather than assumed, as btclib's script.toml's own comment on this
 # exclusion asks:
 #
