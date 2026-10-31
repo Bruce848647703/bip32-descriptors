@@ -704,7 +704,7 @@ result.
 1. Review the bestpractices.dev answers. Refresh the saved answers with
    btclib-org/.github's `.github/scripts/bestpractices.py`, and run its
    `--stale` and `--differ` to find what to read (section 10 of its README).
-   Read <https://www.bestpractices.dev/projects/15632> against the release
+   Read <https://www.bestpractices.dev/projects/16116> against the release
    and update every answer it changed: the release notes and the
    vulnerabilities it fixed, signed tags and assets, attestation names.
    Then refresh the saved answers again. An advisory this repository

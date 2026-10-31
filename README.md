@@ -51,6 +51,8 @@ says how the choice is enforced.
 [![codeql workflow status](https://github.com/btclib-org/bip32-descriptors/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/btclib-org/bip32-descriptors/actions/workflows/codeql.yml?query=branch%3Amain)
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/btclib-org/bip32-descriptors/badge)](https://scorecard.dev/viewer/?uri=github.com/btclib-org/bip32-descriptors)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16116/badge)](https://www.bestpractices.dev/projects/16116)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/16116/baseline)](https://www.bestpractices.dev/projects/16116)
 
 It is fully annotated and ships `py.typed`. It is built on
 [btclib](https://github.com/btclib-org/btclib), the protocol package, and
