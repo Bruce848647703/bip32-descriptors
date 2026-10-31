@@ -23,9 +23,9 @@ behind them.
 
 ### The repository opens with btclib-wallet's bip32 and descriptors
 
-btclib-wallet's `bip32` and `descriptors` at 78e360b, with their tests,
-renamed to `bip32_descriptors`, around base58-bech32's repository files
-(issue btclib-org/.github#1811).
+btclib-wallet's `bip32` and `descriptors` at b8b5c9b, with their tests,
+renamed to `bip32_descriptors`, around base58-bech32's repository files;
+the integration workflow pins bitcoind 32.1 (issue btclib-org/.github#1811).
 
 ### The prose describes this package
 
