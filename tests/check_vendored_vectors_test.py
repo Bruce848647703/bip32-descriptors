@@ -1,0 +1,1310 @@
+# Copyright (c) The btclib developers
+# Distributed under the MIT software license, see the accompanying
+# LICENSE file or https://opensource.org/license/mit for the full text.
+
+"""Tests for the vendored-vector re-checker of `.github/scripts`.
+
+Its only external dependency is `gh`, called several ways across
+`_latest_commit`, `_upstream_blob`, `_open_issue_number` and `report`. Every
+test here replaces `subprocess.run` with `FakeGh`, which answers each call
+the way a real `gh api`/`gh issue` would rather than reaching GitHub: a
+real call would need a token, would not be deterministic across a re-run,
+and is the one thing the parsing and reporting logic below does not need to
+have working to be tested.
+
+The script is loaded by path, `.github/scripts` being no package: the
+mutation-counter test does the same for the same reason. Its dataclasses
+need one thing that one does not -- `Entry` and `Drift` are decorated
+with `from __future__ import annotations` in scope, so `@dataclass`
+resolves their field types through `sys.modules[cls.__module__]`, which
+has to name the module before `exec_module` runs it.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import runpy
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+# resolved once: a bare "git" in a subprocess list is a partial executable
+# path
+_GIT = shutil.which("git") or "git"
+
+_SCRIPT = (
+    Path(__file__).parents[1] / ".github" / "scripts" / "check_vendored_vectors.py"
+)
+
+
+@pytest.fixture
+def checker(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Return the script, imported by path, registered before it runs."""
+    spec = importlib.util.spec_from_file_location("check_vendored_vectors", _SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "check_vendored_vectors", module)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeGh:
+    """A `subprocess.run` stand-in, answering by which `gh` call this is.
+
+    `commits` maps a (repo, path) pair to the sha and date
+    `_latest_commit` should read back, or to None for a path the branch
+    walked never held -- which the api answers with an empty list rather
+    than an error. `open_issue` is the number `_open_issue_number` should report
+    open, or None for no issue open. Every call is recorded in `calls`,
+    argv and all, so a test can assert what was asked for rather than
+    only what came back.
+    """
+
+    def __init__(self) -> None:
+        self.commits: dict[tuple[str, str], tuple[str, str] | None] = {}
+        # a (repo, tree) pair to the blobs of the entries it holds, by name
+        self.trees: dict[tuple[str, str], dict[str, str]] = {}
+        self.open_issue: int | None = None
+        self.calls: list[list[str]] = []
+
+    def __call__(
+        self, argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        """Record the call, and answer as the `gh` sub-command it names."""
+        self.calls.append(list(argv))
+        if argv[1] == "api" and "/git/trees/" in argv[4]:
+            repo, _, tree = argv[4].removeprefix("repos/").partition("/git/trees/")
+            blobs = self.trees[repo, tree]
+            items = [{"path": name, "sha": sha} for name, sha in blobs.items()]
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=json.dumps({"tree": items})
+            )
+        if argv[1] == "api":
+            repo = argv[4].removeprefix("repos/").removesuffix("/commits")
+            path = argv[6].removeprefix("path=")
+            answer = self.commits[repo, path]
+            # None is what the api answers for a path the branch walked
+            # never held: an empty list, which is a 200 and not an error
+            if answer is None:
+                return subprocess.CompletedProcess(argv, 0, stdout="[]")
+            sha, date = answer
+            commit = {
+                "sha": sha,
+                "commit": {"committer": {"date": f"{date}T00:00:00Z"}},
+            }
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps([commit]))
+        if argv[2] == "list":
+            issues = (
+                [{"number": self.open_issue}] if self.open_issue is not None else []
+            )
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(issues))
+        return subprocess.CompletedProcess(argv, 0, stdout="")
+
+
+@pytest.fixture
+def fake_gh(checker: ModuleType, monkeypatch: pytest.MonkeyPatch) -> FakeGh:
+    """Install a `FakeGh` in place of the script's own `subprocess.run`."""
+    fake = FakeGh()
+    monkeypatch.setattr(checker.subprocess, "run", fake)
+    return fake
+
+
+def readme(*blocks: str) -> str:
+    """Join fenced ```text blocks under one ### heading each, README-shaped."""
+    return "\n\n".join(blocks)
+
+
+def entry(heading: str, **fields: str) -> str:
+    """Return one `### heading` and its fenced field block, README-shaped."""
+    body = "\n".join(f"{key}  {value}" for key, value in fields.items())
+    return f"### {heading}\n\n```text\n{body}\n```"
+
+
+def test_a_checkable_entry_is_returned(checker: ModuleType) -> None:
+    """A pin with repo, path, commit and `behind: 0` is a checkable Entry."""
+    text = readme(
+        entry(
+            "`f.json`",
+            repo="btclib-org/btclib",
+            path="tests/f.json",
+            commit="deadbeef  2026-01-01",
+            behind="0 revisions; that commit is the tip of the path",
+        )
+    )
+    entries, skipped = checker._entries_at_tip(text)
+    assert skipped == []
+    assert entries == [
+        checker.Entry("`f.json`", "btclib-org/btclib", "tests/f.json", "deadbeef")
+    ]
+
+
+def test_a_ref_field_is_read_onto_the_entry(checker: ModuleType) -> None:
+    """A pin naming a `ref` carries it, for a path off the default branch."""
+    text = readme(
+        entry(
+            "`f.json`",
+            repo="siv2r/bips",
+            path="bip-0445/python/vectors/f.json",
+            ref=" bip-frost-signing ",
+            commit="deadbeef  2026-01-01",
+            behind="0 revisions; that commit is the tip of the path",
+        )
+    )
+    (found,) = checker._entries_at_tip(text)[0]
+    assert found.ref == "bip-frost-signing"
+
+
+def test_no_ref_field_leaves_the_entry_s_ref_none(checker: ModuleType) -> None:
+    """A pin with no `ref` line is a default-branch pin."""
+    text = readme(
+        entry(
+            "`f.json`",
+            repo="btclib-org/btclib",
+            path="tests/f.json",
+            commit="deadbeef  2026-01-01",
+            behind="0",
+        )
+    )
+    (found,) = checker._entries_at_tip(text)[0]
+    assert found.ref is None
+
+
+def test_a_placeholder_path_is_skipped(checker: ModuleType) -> None:
+    """A `<name>` path is a group pin, not a checkable single path."""
+    text = readme(
+        entry(
+            "group",
+            repo="bitcoin/bips",
+            path="bip-0327/vectors/<name>.json",
+            commit="deadbeef  2026-01-01",
+            behind="0 revisions",
+        )
+    )
+    entries, skipped = checker._entries_at_tip(text)
+    assert entries == []
+    assert skipped == ["group (one pin serves several files)"]
+
+
+def test_a_behind_pin_is_skipped(checker: ModuleType) -> None:
+    """A `behind` reading anything but 0 is a skip, named as documented."""
+    text = readme(
+        entry(
+            "stale",
+            repo="btclib-org/btclib",
+            path="tests/f.json",
+            commit="deadbeef  2026-01-01",
+            behind="3 revisions, none touching the vectors",
+        )
+    )
+    entries, skipped = checker._entries_at_tip(text)
+    assert entries == []
+    assert skipped == ["stale (already documented as behind)"]
+
+
+def test_a_pin_with_no_behind_line_is_skipped(checker: ModuleType) -> None:
+    """No `behind` line at all is a skip distinct from a documented one.
+
+    `.get("behind", "").startswith("0")` would answer False here too,
+    which is the defect this tells apart: an entry that was never
+    marked either way is not the same as one a human has already
+    decided to leave behind.
+    """
+    text = readme(
+        entry(
+            "stale",
+            repo="btclib-org/btclib",
+            path="tests/f.json",
+            commit="deadbeef  2026-01-01",
+        )
+    )
+    entries, skipped = checker._entries_at_tip(text)
+    assert entries == []
+    assert skipped == ["stale (no behind line at all)"]
+
+
+def test_a_pin_with_an_empty_behind_line_is_skipped(checker: ModuleType) -> None:
+    """A `behind` line present but blank is a skip of its own, not a gap.
+
+    `fields.get("behind")` answers `""` here, not `None`, so
+    `"".startswith("0")` is False and the entry would otherwise fall
+    into the same skip as a `behind` a human has already read and left
+    at something other than 0 -- which nobody has done by leaving the
+    value blank.
+    """
+    text = readme(
+        entry(
+            "stale",
+            repo="btclib-org/btclib",
+            path="tests/f.json",
+            commit="deadbeef  2026-01-01",
+            behind="",
+        )
+    )
+    entries, skipped = checker._entries_at_tip(text)
+    assert entries == []
+    assert skipped == ["stale (behind line present but empty)"]
+
+
+def test_a_bare_field_that_is_not_last_does_not_swallow_the_next_line(
+    checker: ModuleType,
+) -> None:
+    r"""A bare key with nothing after it on its own line matches nothing.
+
+    `\s+` between a key and its value also matches the newline ending a
+    bare key's own line, so the separator used to cross into the
+    following line and capture it whole as the bare key's own value --
+    and the field that line actually names was then never matched at
+    all. Here `behind` is bare and is not the last field in its block,
+    so under the old separator it would swallow `commit`'s whole line
+    and the entry would wrongly read as having no commit rather than no
+    `behind`. `entry()` cannot pose this: it always writes a value,
+    hence the block is written out by hand, README-shaped.
+    """
+    text = (
+        "### `f.json`\n\n```text\nrepo  r\npath  p.json\nbehind\ncommit  cafe1234\n```"
+    )
+    entries, skipped = checker._entries_at_tip(text)
+    assert entries == []
+    assert skipped == ["`f.json` (no behind line at all)"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"repo": "btclib-org/btclib", "path": "tests/f.json"},  # no commit
+        {"repo": "btclib-org/btclib", "commit": "deadbeef"},  # no path
+        {"path": "tests/f.json", "commit": "deadbeef"},  # no repo
+        {"pulled": "2020-01-01"},  # chain data: no pin at all
+    ],
+)
+def test_an_entry_with_no_commit_is_skipped(
+    checker: ModuleType, fields: dict[str, str]
+) -> None:
+    """Missing repo, path or commit skips too -- named, not silently."""
+    text = readme(entry("no pin", **fields))
+    entries, skipped = checker._entries_at_tip(text)
+    assert entries == []
+    assert skipped == ["no pin (no commit to check against)"]
+
+
+def test_the_heading_is_the_nearest_one_before_the_block(checker: ModuleType) -> None:
+    """An intro heading with no block of its own never names an entry."""
+    text = (
+        "### intro heading, no block of its own\n\n"
+        "some prose about a whole group\n\n"
+        + entry(
+            "`f.json`",
+            repo="btclib-org/btclib",
+            path="tests/f.json",
+            commit="deadbeef  2026-01-01",
+            behind="0 revisions",
+        )
+    )
+    entries, _ = checker._entries_at_tip(text)
+    assert [e.heading for e in entries] == ["`f.json`"]
+
+
+_PIN_README = Path(__file__).parent / "_data" / "README.md"
+
+# the two shapes `tests/_data/README.md` carries that no fenced block
+# describes: a group heading whose files are pinned one by one below it,
+# and a file this project composed itself, whose section is prose and a
+# pulled date. Written out here rather than assembled by `entry()`,
+# which gives every heading a block by construction and so cannot pose
+# the question
+_UNPINNED = """\
+## bitcoin/bips
+
+### BIP327 (MuSig2): one file under `tests/ecc/_data/`
+
+Eight files, pinned one by one below: the group heading is where the
+prose common to them goes.
+
+### `tests/ecc/_data/key_agg_vectors.json`
+
+```text
+repo    bitcoin/bips
+path    bip-0327/vectors/key_agg_vectors.json
+commit  deadbeef  2026-01-01
+blob    cafe1234
+pulled  2026-01-02
+behind  0 revisions; that commit is the tip of the path
+```
+
+## Not vendored from anywhere
+
+### `tests/_data/ours.json`
+
+This project's own, composed rather than copied: there is no upstream URL to
+give, because there is no upstream.
+
+Pulled 2020-01-01.
+"""
+
+
+def test_a_heading_with_no_fenced_block_of_its_own_is_named_as_skipped(
+    checker: ModuleType,
+) -> None:
+    """The shape the block-by-block walk cannot see, and reports anyway.
+
+    `_entries_at_tip` iterates fenced blocks, so a heading owning none
+    never enters the loop: without a second pass it is neither checked
+    nor listed, which is what a pin whose block an edit broke looks
+    like, and what the module docstring promises cannot happen
+    (issue btclib-org/btclib#1447).
+    """
+    entries, skipped = checker._entries_at_tip(_UNPINNED)
+
+    assert [e.heading for e in entries] == ["`tests/ecc/_data/key_agg_vectors.json`"]
+    assert skipped == [
+        "BIP327 (MuSig2): one file under `tests/ecc/_data/` (no fenced block)",
+        "`tests/_data/ours.json` (no fenced block)",
+    ]
+
+
+def test_a_heading_owning_several_blocks_is_skipped_once(checker: ModuleType) -> None:
+    """One line per reason, not one per block (issue btclib-org/btclib#1451).
+
+    `tests/fetch/_data/*` has this shape: a block listing the files, and
+    two more carrying the chain data that verifies them. All three are
+    skipped for the same reason, and the line naming the heading says
+    nothing that tells them apart.
+    """
+    text = (
+        "### `tests/fetch/_data/*` — seven response bodies\n\n"
+        "```text\ngetblockcount.json  48 bytes\npulled  2026-08-02\n```\n\n"
+        "What they carry is chain data, and it verifies itself.\n\n"
+        "```text\ntxid  f4184fc596403b9d638783cf57adfe4c75c605f6"
+        "356fbc91338530e9831e9e16\n```\n\n"
+        "which is `tests/block/_data/block_481824_complete.bin`.\n\n"
+        "```text\n0000000000000000001c8018d9cb3b742ef25114f27563e3fc4a1902167f9893\n```"
+    )
+
+    entries, skipped = checker._entries_at_tip(text)
+
+    assert entries == []
+    assert skipped == [
+        "`tests/fetch/_data/*` — seven response bodies (no commit to check against)"
+    ]
+
+
+def test_one_heading_keeps_one_line_per_reason(checker: ModuleType) -> None:
+    """Two blocks skipped for different reasons are two lines, not one.
+
+    What is collapsed is the identical line, so a heading whose blocks
+    were passed over for two reasons still reports both: the reason is
+    what a reader acts on, and dropping one would trade the repetition
+    of issue btclib-org/btclib#1451 for a silence.
+    """
+    text = (
+        "### group\n\n"
+        "```text\npulled  2020-01-01\n```\n\n"
+        "```text\nrepo  r\npath  vectors/<name>.json\ncommit  deadbeef\n"
+        "behind  0 revisions\n```"
+    )
+
+    _entries, skipped = checker._entries_at_tip(text)
+
+    assert skipped == [
+        "group (no commit to check against)",
+        "group (one pin serves several files)",
+    ]
+
+
+def test_every_heading_of_the_pin_file_is_checked_or_named_once(
+    checker: ModuleType,
+) -> None:
+    """The promise, over the README the weekly run actually parses.
+
+    A fixture answers for the shapes it was written to carry, and this
+    parser's failure mode is a shape nobody thought to write down: what
+    it does not match, it drops. `tests/_data/README.md` is the ledger
+    the workflow passes, so it is what settles whether a heading of it
+    can go missing from the report -- and the first assertion is what
+    says the parse still sees the file at all, a parser that matched
+    nothing passing every other line here.
+    """
+    readme = _PIN_README.read_text(encoding="utf-8")
+
+    entries, skipped = checker._entries_at_tip(readme)
+
+    assert entries
+    assert sorted(skipped) == sorted(set(skipped))
+    checked = {e.heading for e in entries}
+    unreported = [
+        heading
+        for heading in checker._HEADING.findall(readme)
+        if heading not in checked
+        and not any(line.startswith(f"{heading} (") for line in skipped)
+    ]
+    assert unreported == []
+
+
+def test_a_block_with_no_heading_before_it_has_an_empty_one(
+    checker: ModuleType,
+) -> None:
+    """A fenced block before any `### ` heading names an empty heading."""
+    text = "```text\nrepo btclib-org/btclib\n```"
+    entries, skipped = checker._entries_at_tip(text)
+    assert entries == []
+    assert skipped == [" (no commit to check against)"]
+
+
+def test_commit_and_path_whitespace_is_stripped(checker: ModuleType) -> None:
+    """Only the commit's own sha is kept, and the path is trimmed."""
+    text = readme(
+        entry(
+            "`f.json`",
+            repo="btclib-org/btclib",
+            path=" tests/f.json ",
+            commit="deadbeef  2026-01-01, refreshed 2026-08-06",
+            behind="0 revisions",
+        )
+    )
+    (found,) = checker._entries_at_tip(text)[0]
+    assert found.path == "tests/f.json"
+    assert found.commit == "deadbeef"
+
+
+def test_latest_commit_asks_for_one_commit_touching_the_path(
+    checker: ModuleType, fake_gh: FakeGh
+) -> None:
+    """The one `gh api` call, and the sha and date it reads back."""
+    fake_gh.commits["btclib-org/btclib", "tests/f.json"] = ("cafe1234", "2026-08-01")
+    sha, date = checker._latest_commit("btclib-org/btclib", "tests/f.json")
+    assert (sha, date) == ("cafe1234", "2026-08-01")
+    (call,) = fake_gh.calls
+    assert call[1:5] == ["api", "--method", "GET", "repos/btclib-org/btclib/commits"]
+    assert "path=tests/f.json" in call
+    assert "per_page=1" in call
+    assert not any(arg.startswith("sha=") for arg in call)
+
+
+def test_latest_commit_asks_the_named_ref_when_the_entry_carries_one(
+    checker: ModuleType, fake_gh: FakeGh
+) -> None:
+    """A `ref` becomes the call's own `sha` parameter, GitHub's name for it.
+
+    Off the repository's default branch is where `commits?path=` answers
+    an empty list for a path that is, in fact, still there
+    (btclib-org/btclib#2160): naming the branch is what makes the same
+    path findable.
+    """
+    fake_gh.commits["siv2r/bips", "bip-0445/python/vectors/f.json"] = (
+        "cafe1234",
+        "2026-08-01",
+    )
+    sha, date = checker._latest_commit(
+        "siv2r/bips", "bip-0445/python/vectors/f.json", "bip-frost-signing"
+    )
+    assert (sha, date) == ("cafe1234", "2026-08-01")
+    (call,) = fake_gh.calls
+    assert "sha=bip-frost-signing" in call
+
+
+def test_latest_commit_is_none_for_a_path_the_branch_never_held(
+    checker: ModuleType, fake_gh: FakeGh
+) -> None:
+    """An empty answer is None, not an unpacking error.
+
+    `repos/{repo}/commits?path=` answers `[]` with a 200 for a path the
+    branch it walks never held; a path deleted or renamed away answers
+    with the commit that removed it instead. Unpacking one commit out of
+    `[]` raises `ValueError`, which would take `find_drift` down with it
+    and leave `report` unreached: a red run and no issue.
+    """
+    fake_gh.commits["btclib-org/btclib", "tests/absent.json"] = None
+    assert checker._latest_commit("btclib-org/btclib", "tests/absent.json") is None
+
+
+def test_find_drift_reports_a_path_the_branch_never_held(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """A pin with no commit on its branch is drift with no tip to name."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        readme(
+            entry(
+                "`absent.json`",
+                repo="r",
+                path="absent.json",
+                commit="old0000  2020-01-01",
+                behind="0",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_gh.commits["r", "absent.json"] = None
+
+    drifted, skipped = checker.find_drift(path)
+
+    assert skipped == []
+    (drift,) = drifted
+    assert drift.has_no_tip
+    assert (drift.latest_commit, drift.latest_date) == ("", "")
+
+    body = checker._issue_body(path, drifted, [])
+    assert (
+        "no commit on the default branch of `r` touches `absent.json` --"
+        " a path that branch never held"
+    ) in body
+
+
+def test_the_issue_body_names_a_pinned_ref_as_the_branch_never_holding_it(
+    checker: ModuleType,
+) -> None:
+    """A pin carrying a `ref` is named on that branch, not the default one."""
+    entry_ = checker.Entry("`f.json`", "r", "f.json", "old0000", "pr-branch")
+    drift = checker.Drift(entry_, "", "")
+    body = checker._issue_body(Path("README.md"), [drift], [])
+    assert (
+        "no commit on `pr-branch` of `r` touches `f.json` --"
+        " a path that branch never held"
+    ) in body
+
+
+def test_a_removing_commit_is_drift_that_may_be_a_removal(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """A deleted pin's latest commit is the deleting one, named as maybe that.
+
+    The api answers a path deleted or renamed away with the commit that
+    removed it, so the drift is an ordinary one with a tip, and the line
+    reporting it says that commit may have removed the file.
+    """
+    path = _write_readme(
+        tmp_path,
+        entry(
+            "`deleted.py`",
+            repo="r",
+            path="deleted.py",
+            commit="old0000  2020-01-01",
+            behind="0",
+        ),
+    )
+    fake_gh.commits["r", "deleted.py"] = ("removing0", "2026-01-01")
+
+    drifted, skipped = checker.find_drift(path)
+
+    assert skipped == []
+    (drift,) = drifted
+    assert not drift.has_no_tip
+    body = checker._issue_body(path, drifted, skipped)
+    assert (
+        "the latest commit touching `deleted.py` is now `removing0`"
+        " (2026-01-01), `r` -- which may have deleted or renamed"
+        " the file rather than changed it"
+    ) in body
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["prog"],
+        ["prog", "a.md"],  # a ledger and no title
+        ["prog", "a.md", "a title", "b.md"],
+    ],
+)
+def test_main_says_how_to_be_called_when_it_is_not(
+    checker: ModuleType,
+    argv: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Anything but a ledger and a title is the usage, not an IndexError.
+
+    Only a human running this by hand reaches it -- the workflow passes
+    both every time -- and what an unchecked index into `args` gives
+    them is `IndexError: list index out of range` naming a list they
+    never saw.
+    """
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert checker.main() == 2
+
+    captured = capsys.readouterr()
+    # argv[0] is what names the program, so the fixture's own "prog" is
+    # what comes back here rather than the script's file name
+    assert captured.err == "usage: prog <ledger path> <issue title> [--dry-run]\n"
+    assert not captured.out
+
+
+def test_main_says_no_commit_rather_than_behind_for_a_path_never_held(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Stdout tells a moved pin from one with no commit on its branch."""
+    path = _write_readme(
+        tmp_path,
+        entry(
+            "`absent.json`",
+            repo="r",
+            path="absent.json",
+            commit="old0000  2020-01-01",
+            behind="0",
+        ),
+    )
+    fake_gh.commits["r", "absent.json"] = None
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title", "--dry-run"])
+
+    assert checker.main() == 0
+
+    out = capsys.readouterr().out
+    assert (
+        "NO COMMIT: `absent.json` pinned to old0000, and no commit on"
+        " the default branch of r touches absent.json"
+    ) in out
+    assert "BEHIND" not in out
+
+
+# a pin and a tip alike in a short prefix and apart past it, the pair
+# btclib-org/.github#1343 was filed on
+_PINNED = "9b37d42b23be07ee3a37eae4bcbd52c8ba36ee40"
+_TIP = "9b37d42b23be096cc4cfb457f1022e443102b650"
+
+
+def test_main_prints_a_pin_and_a_tip_alike_in_a_prefix_as_two_shas(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A drift line names both commits whole, so it never reads as a tie."""
+    assert _PINNED[:12] == _TIP[:12]
+    path = _write_readme(
+        tmp_path,
+        entry(
+            "`signet.py`",
+            repo="r",
+            path="signet.py",
+            commit=f"{_PINNED}  2026-09-11",
+            behind="0",
+        ),
+    )
+    fake_gh.commits["r", "signet.py"] = (_TIP, "2026-09-11")
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title", "--dry-run"])
+
+    assert checker.main() == 0
+
+    out = capsys.readouterr().out
+    assert (
+        f"pinned to {_PINNED}, latest commit touching it is {_TIP} (2026-09-11)"
+    ) in out
+
+
+def test_main_prints_the_pin_of_a_path_never_held_whole(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A NO COMMIT line names the pinned commit whole, as a BEHIND line does."""
+    path = _write_readme(
+        tmp_path,
+        entry("`absent.py`", repo="r", path="absent.py", commit=_PINNED, behind="0"),
+    )
+    fake_gh.commits["r", "absent.py"] = None
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title", "--dry-run"])
+
+    assert checker.main() == 0
+
+    assert f"NO COMMIT: `absent.py` pinned to {_PINNED}," in capsys.readouterr().out
+    drift = checker.Drift(_entry(checker, "`absent.py`", _PINNED), "", "")
+    assert f"`{_PINNED}`" in checker._issue_body(Path("README.md"), [drift], [])
+
+
+def test_find_drift_tells_moved_pins_from_still_current_ones(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """One pin drifted, one did not, and a `behind` pin is skipped too."""
+    path = tmp_path / "README.md"
+    path.write_text(
+        readme(
+            entry(
+                "`moved.json`",
+                repo="r",
+                path="moved.json",
+                commit="old0000  2020-01-01",
+                behind="0",
+            ),
+            entry(
+                "`still.json`",
+                repo="r",
+                path="still.json",
+                commit="cur0000  2020-01-01",
+                behind="0",
+            ),
+            entry("stale", repo="r", path="stale.json", commit="x", behind="1"),
+        ),
+        encoding="utf-8",
+    )
+    fake_gh.commits["r", "moved.json"] = ("new0000", "2026-01-01")
+    fake_gh.commits["r", "still.json"] = ("cur0000", "2020-01-01")
+
+    drifted, skipped = checker.find_drift(path)
+
+    assert skipped == ["stale (already documented as behind)"]
+    (drift,) = drifted
+    assert drift.entry.heading == "`moved.json`"
+    assert (drift.latest_commit, drift.latest_date) == ("new0000", "2026-01-01")
+
+
+def test_find_drift_asks_a_pinned_ref_rather_than_the_default_branch(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """A pin's own `ref` reaches `_latest_commit` through `find_drift` too.
+
+    `FakeGh` answers by (repo, path) alone, so what this proves is the
+    call itself carries the ref -- not that ref changes what comes
+    back, which is GitHub's own answer to give.
+    """
+    path = tmp_path / "README.md"
+    path.write_text(
+        readme(
+            entry(
+                "`f.json`",
+                repo="siv2r/bips",
+                path="bip-0445/python/vectors/f.json",
+                ref="bip-frost-signing",
+                commit="old0000  2026-01-01",
+                behind="0",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_gh.commits["siv2r/bips", "bip-0445/python/vectors/f.json"] = (
+        "old0000",
+        "2026-01-01",
+    )
+
+    drifted, skipped = checker.find_drift(path)
+
+    assert not drifted
+    assert skipped == []
+    (call,) = fake_gh.calls
+    assert "sha=bip-frost-signing" in call
+
+
+def _entry(checker: ModuleType, heading: str, commit: str = "old0000") -> object:
+    return checker.Entry(heading, "r", "p.json", commit)
+
+
+def test_the_issue_body_names_every_drift_and_every_skip(checker: ModuleType) -> None:
+    """The body names the pinned and the new commit, and every skip."""
+    drift = checker.Drift(_entry(checker, "`p.json`"), "new0000", "2026-01-01")
+    body = checker._issue_body(Path("tests/_data/README.md"), [drift], ["skipped one"])
+    assert "`p.json`" in body
+    assert "`old0000" in body
+    assert "`new0000` (2026-01-01)" in body
+    assert "Not checked by this run" in body
+    assert "- skipped one" in body
+
+
+def test_the_issue_body_omits_the_skip_section_when_nothing_was_skipped(
+    checker: ModuleType,
+) -> None:
+    """No skip list at all, rather than an empty one, when nothing skipped."""
+    drift = checker.Drift(_entry(checker, "`p.json`"), "new0000", "2026-01-01")
+    body = checker._issue_body(Path("README.md"), [drift], [])
+    assert "Not checked by this run" not in body
+
+
+def test_the_issue_body_prints_a_pin_and_a_tip_alike_in_a_prefix_whole(
+    checker: ModuleType,
+) -> None:
+    """The body names both commits whole, as the drift line does."""
+    drift = checker.Drift(_entry(checker, "`p.json`", _PINNED), _TIP, "2026-09-11")
+    body = checker._issue_body(Path("README.md"), [drift], [])
+    assert f"`{_PINNED}`" in body
+    assert f"`{_TIP}` (2026-09-11)" in body
+
+
+def test_open_issue_number_reads_the_first_match(
+    checker: ModuleType, fake_gh: FakeGh
+) -> None:
+    """The number of the first issue `gh issue list` names, as a string."""
+    fake_gh.open_issue = 42
+    assert checker._open_issue_number("A title") == "42"
+    (call,) = fake_gh.calls
+    assert '"A title" in:title' in call
+
+
+def test_open_issue_number_is_none_when_none_is_open(
+    checker: ModuleType, fake_gh: FakeGh
+) -> None:
+    """An empty `gh issue list` is None, not an empty string."""
+    assert checker._open_issue_number("A title") is None
+
+
+def test_report_closes_an_open_issue_when_nothing_drifted(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """Nothing drifted, an issue was open: it gets closed."""
+    fake_gh.open_issue = 7
+    checker.report(tmp_path / "README.md", "A title", [], [])
+    verbs = [call[2] for call in fake_gh.calls if call[1] == "issue"]
+    assert verbs == ["list", "close"]
+
+
+def test_report_does_nothing_when_clean_and_no_issue_is_open(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """Nothing drifted, no issue was open: nothing is written."""
+    checker.report(tmp_path / "README.md", "A title", [], [])
+    assert [call[2] for call in fake_gh.calls] == ["list"]
+
+
+def test_report_creates_an_issue_when_none_is_open(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """Something drifted, no issue was open: a new one is created.
+
+    Under the title it was handed, and the same title is what the search
+    before it asked for: one ledger's run finds and files its own issue
+    rather than the other ledger's (issue btclib-org/btclib#1732).
+    """
+    drift = checker.Drift(_entry(checker, "`p.json`"), "new0000", "2026-01-01")
+    checker.report(tmp_path / "README.md", "Ledger A behind upstream", [drift], [])
+    verbs = [call[2] for call in fake_gh.calls if call[1] == "issue"]
+    assert verbs == ["list", "create"]
+    (list_call,) = (call for call in fake_gh.calls if call[2] == "list")
+    assert '"Ledger A behind upstream" in:title' in list_call
+    (create_call,) = (call for call in fake_gh.calls if call[2] == "create")
+    assert create_call[create_call.index("--title") + 1] == "Ledger A behind upstream"
+
+
+def test_report_edits_the_open_issue(
+    checker: ModuleType, fake_gh: FakeGh, tmp_path: Path
+) -> None:
+    """Something drifted, an issue was already open: it is edited, by number."""
+    fake_gh.open_issue = 9
+    drift = checker.Drift(_entry(checker, "`p.json`"), "new0000", "2026-01-01")
+    checker.report(tmp_path / "README.md", "A title", [drift], [])
+    verbs = [call[2] for call in fake_gh.calls if call[1] == "issue"]
+    assert verbs == ["list", "edit"]
+    (edit_call,) = (call for call in fake_gh.calls if call[2] == "edit")
+    assert edit_call[3] == "9"
+
+
+def _write_readme(tmp_path: Path, *blocks: str) -> Path:
+    path = tmp_path / "README.md"
+    path.write_text(readme(*blocks), encoding="utf-8")
+    return path
+
+
+def test_main_dry_run_prints_but_never_calls_issue(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Prints drift and skips, and never touches an issue, on --dry-run."""
+    path = _write_readme(
+        tmp_path,
+        entry(
+            "`p.json`",
+            repo="r",
+            path="p.json",
+            commit="old0000  2020-01-01",
+            behind="0",
+        ),
+        entry("stale", repo="r", path="s.json", commit="x", behind="1"),
+    )
+    fake_gh.commits["r", "p.json"] = ("new0000", "2026-01-01")
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title", "--dry-run"])
+
+    assert checker.main() == 0
+
+    out = capsys.readouterr().out
+    assert (
+        "BEHIND: `p.json` pinned to old0000, latest commit touching it is"
+        " new0000 (2026-01-01), which may have deleted or renamed it"
+    ) in out
+    assert "SKIPPED: stale (already documented as behind)" in out
+    assert not any(call[1] == "issue" for call in fake_gh.calls)
+
+
+def test_main_reports_and_says_nothing_drifted_when_clean(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Clean and not a dry run: prints the all-clear and closes the issue."""
+    path = _write_readme(
+        tmp_path,
+        entry(
+            "`p.json`",
+            repo="r",
+            path="p.json",
+            commit="old0000  2020-01-01",
+            behind="0",
+        ),
+    )
+    fake_gh.commits["r", "p.json"] = ("old0000", "2020-01-01")
+    fake_gh.open_issue = 3
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title"])
+
+    assert checker.main() == 0
+
+    out = capsys.readouterr().out
+    assert "Every checked pin is still at upstream's tip." in out
+    assert [call[2] for call in fake_gh.calls if call[1] == "issue"] == [
+        "list",
+        "close",
+    ]
+
+
+def test_the_main_guard_runs_the_script_as___main__(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Cover `if __name__ == "__main__":` without a subprocess.
+
+    This project collects no coverage from a child interpreter, so a real
+    subprocess would leave the guard uncovered. `runpy.run_path` executes
+    the file fresh with `__name__` set to `"__main__"` in this
+    interpreter instead, so the guard itself is under test, not only the
+    function it calls.
+    """
+    path = _write_readme(
+        tmp_path,
+        entry(
+            "`p.json`",
+            repo="r",
+            path="p.json",
+            commit="old0000  2020-01-01",
+            behind="0",
+        ),
+    )
+    fake = FakeGh()
+    fake.commits["r", "p.json"] = ("old0000", "2020-01-01")
+    monkeypatch.setattr(subprocess, "run", fake)
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title", "--dry-run"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path(str(_SCRIPT), run_name="__main__")
+
+    assert excinfo.value.code == 0
+    assert "Every checked pin is still at upstream's tip." in capsys.readouterr().out
+
+
+_COMMIT = "c0ffee0"
+_UPSTREAM_BLOB = "1" * 40
+
+
+def _blob_of(data: bytes) -> str:
+    """Return a git blob SHA-1, computed apart from the script's own."""
+    return hashlib.sha1(
+        b"blob %d\0" % len(data) + data, usedforsecurity=False
+    ).hexdigest()
+
+
+def test_git_blob_is_what_git_hash_object_prints(
+    checker: ModuleType, tmp_path: Path
+) -> None:
+    r"""The empty blob and `hello\n` are the two every git user has seen."""
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    hello = tmp_path / "hello"
+    hello.write_bytes(b"hello\n")
+    assert checker._git_blob(empty) == "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    assert checker._git_blob(hello) == "ce013625030ba8dba906f756967f9e9ca394464a"
+
+
+def _vendored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_gh: FakeGh,
+    *,
+    data: bytes = b"[1]\n",
+    **fields: str,
+) -> Path:
+    """Write `tests/f.json` and a ledger entry for it, and return the ledger.
+
+    The entry records the blob of `data`, as `blob` unless a field says
+    otherwise, and upstream's tree at the commit holds the same blob.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "f.json").write_bytes(data)
+    recorded = {"blob": _blob_of(data)} | fields
+    fake_gh.trees["r", f"{_COMMIT}:up"] = {"f.json": recorded.get("blob", "")}
+    return _write_readme(
+        tmp_path,
+        entry(
+            "`tests/f.json`",
+            repo="r",
+            path="up/f.json",
+            commit=f"{_COMMIT}  2026-01-01",
+            behind="0",
+            **recorded,
+        ),
+    )
+
+
+def test_a_file_matching_its_blob_and_upstream_s_is_clean(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both comparisons pass, and both ran."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    mismatches, skipped, hashed, asked = checker.find_mismatches(path)
+    assert (mismatches, skipped, hashed, asked) == ([], [], 1, 1)
+    (call,) = fake_gh.calls
+    assert call[4] == f"repos/r/git/trees/{_COMMIT}:up"
+
+
+def test_a_tampered_file_is_a_mismatch_naming_it(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A byte changed here, with the ledger and upstream untouched, fails."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    (tmp_path / "tests" / "f.json").write_bytes(b"[2]\n")
+    (mismatch,) = checker.find_mismatches(path)[0]
+    assert mismatch.startswith("tests/f.json: its bytes hash to blob")
+    assert _blob_of(b"[2]\n") in mismatch
+    assert _blob_of(b"[1]\n") in mismatch
+
+
+def test_a_file_missing_from_the_tree_is_a_mismatch(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ledger naming a file that is not there fails, rather than skipping."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    (tmp_path / "tests" / "f.json").unlink()
+    mismatches, _, hashed, _ = checker.find_mismatches(path)
+    assert mismatches == ["tests/f.json: the ledger names it and it is not here"]
+    assert hashed == 0
+
+
+def test_a_blob_that_is_not_upstream_s_at_the_commit_is_a_mismatch(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The file matches the ledger and the ledger is not what upstream holds."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    fake_gh.trees["r", f"{_COMMIT}:up"] = {"f.json": _UPSTREAM_BLOB}
+    (mismatch,) = checker.find_mismatches(path)[0]
+    assert mismatch.startswith("tests/f.json: r at c0ffee0 holds up/f.json as blob")
+    assert _UPSTREAM_BLOB in mismatch
+
+
+def test_a_path_absent_at_the_commit_is_a_mismatch(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Upstream's tree holding no such name is a mismatch, blob `None`."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    fake_gh.trees["r", f"{_COMMIT}:up"] = {}
+    (mismatch,) = checker.find_mismatches(path)[0]
+    assert "as blob None" in mismatch
+
+
+def test_ours_is_what_the_file_is_held_to_and_blob_what_upstream_is(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file differing from upstream in line endings is clean given `ours`."""
+    path = _vendored(
+        tmp_path,
+        monkeypatch,
+        fake_gh,
+        blob=_UPSTREAM_BLOB,
+        ours=_blob_of(b"[1]\n"),
+    )
+    assert checker.find_mismatches(path)[0] == []
+    (tmp_path / "tests" / "f.json").write_bytes(b"[2]\n")
+    (mismatch,) = checker.find_mismatches(path)[0]
+    assert _blob_of(b"[1]\n") in mismatch
+
+
+def test_an_entry_with_ours_and_no_blob_asks_upstream_nothing(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A directory-derived file has no upstream blob: it is hashed alone."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "f.txt").write_bytes(b"x\n")
+    path = _write_readme(
+        tmp_path,
+        entry(
+            "`f.txt`",
+            repo="r",
+            path="src",
+            commit="c0ffee0  2026-01-01",
+            ours=_blob_of(b"x\n"),
+        ),
+    )
+    assert checker.find_mismatches(path) == ([], [], 1, 0)
+    assert not fake_gh.calls
+
+
+def test_an_entry_naming_a_file_with_no_blob_is_named_as_skipped(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither `blob` nor `ours` leaves nothing to compare, and says so.
+
+    A heading that is no one file's path, or an entry with no commit, is
+    not this comparison's to name: the staleness check lists those.
+    """
+    monkeypatch.chdir(tmp_path)
+    path = _write_readme(
+        tmp_path,
+        entry("`f.json`", repo="r", path="f.json", commit="c0ffee0  2026-01-01"),
+        entry("`dir/*.bin`", repo="r", path="d", commit="c0ffee0", blob="a"),
+        entry("not a path", repo="r", path="f.json", commit="c0ffee0", blob="a"),
+        entry("`g.json`", pulled="2026-01-01", blob="a"),
+    )
+    assert checker.find_mismatches(path) == (
+        [],
+        ["`f.json` (no blob or ours line)"],
+        0,
+        0,
+    )
+    assert not fake_gh.calls
+
+
+def test_main_exits_1_on_a_mismatch_and_still_reports_drift(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A tampered file fails the run, after the issue has been dealt with."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    (tmp_path / "tests" / "f.json").write_bytes(b"[2]\n")
+    fake_gh.commits["r", "up/f.json"] = (_COMMIT, "2026-01-01")
+    fake_gh.open_issue = 5
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title"])
+
+    assert checker.main() == 1
+
+    out = capsys.readouterr().out
+    assert "MISMATCH: tests/f.json: its bytes hash to blob" in out
+    assert "Hashed 1 files and asked upstream for 1 blobs: 1 mismatches." in out
+    assert [c[2] for c in fake_gh.calls if c[1] == "issue"] == ["list", "close"]
+
+
+def test_main_exits_0_and_counts_what_it_compared(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A clean run says how many files and blobs it read."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    fake_gh.commits["r", "up/f.json"] = (_COMMIT, "2026-01-01")
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title", "--dry-run"])
+
+    assert checker.main() == 0
+
+    out = capsys.readouterr().out
+    assert "Hashed 1 files and asked upstream for 1 blobs: 0 mismatches." in out
+    assert "MISMATCH" not in out
+
+
+def test_every_vendored_file_the_pin_file_names_is_the_blob_it_records(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The local half of the weekly comparison, over the real ledger, offline.
+
+    The first assertion is what says the parse still finds the pins at
+    all, a parser that matched nothing passing every line after it.
+    """
+    monkeypatch.chdir(_SCRIPT.parents[2])
+    pins, skipped = checker._pins(_PIN_README.read_text(encoding="utf-8"))
+    local = {pin.local for pin in pins}
+    assert {
+        "tests/_data/miniscript_fixed_tests.json",
+        "tests/bip32/_data/bip32_test_vectors.json",
+    } <= local
+    assert skipped == []
+    wrong = [
+        pin.local for pin in pins if checker._git_blob(Path(pin.local)) != pin.expected
+    ]
+    assert wrong == []
+
+
+def test_a_failed_upstream_call_is_a_mismatch_and_the_issue_is_still_dealt_with(
+    checker: ModuleType,
+    fake_gh: FakeGh,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A trees-API error names the file and does not skip `report`."""
+    path = _vendored(tmp_path, monkeypatch, fake_gh)
+    fake_gh.commits["r", "up/f.json"] = ("new0000", "2026-01-01")
+    del fake_gh.trees["r", f"{_COMMIT}:up"]
+    real_run = fake_gh.__call__
+
+    def failing(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "/git/trees/" in argv[4]:
+            raise subprocess.CalledProcessError(1, argv, stderr="HTTP 404\n")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(checker.subprocess, "run", failing)
+    monkeypatch.setattr(sys, "argv", ["prog", str(path), "A title"])
+
+    assert checker.main() == 1
+
+    out = capsys.readouterr().out
+    assert "MISMATCH: tests/f.json: asking r for up/f.json at c0ffee0 failed" in out
+    assert "HTTP 404" in out
+    assert [c[2] for c in fake_gh.calls if c[1] == "issue"] == ["list", "create"]
+
+
+def test_every_file_the_pin_file_names_is_marked_minus_text(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file the ledger hashes is checked out byte for byte: `.gitattributes`.
+
+    Without `-text`, a checkout with `core.autocrlf=true` converts the
+    file and the hash above no longer holds.
+    """
+    monkeypatch.chdir(_SCRIPT.parents[2])
+    pins, _ = checker._pins(_PIN_README.read_text(encoding="utf-8"))
+    assert pins
+    out = subprocess.run(  # noqa: S603
+        [_GIT, "check-attr", "text", "--", *(pin.local for pin in pins)],
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+    ).stdout
+    missing = [line for line in out.splitlines() if not line.endswith(": text: unset")]
+    assert missing == [], "add `<path> -text` to .gitattributes"

@@ -1,0 +1,99 @@
+---
+name: integration-bitcoind
+
+# The suite's one part that needs a program this repository does not ship:
+# a bitcoind to talk to. The node's tests in `tests/integration/` skip
+# without BTCLIB_INTEGRATION, so every other workflow reports them skipped
+# and nothing else asks a real node whether it infers each descriptor
+# shape the way `tests/descriptors/infer_test.py` records. This is where
+# that is asked: a disposable regtest bitcoind, the scripts of each shape
+# paid in a block, `scantxoutset` and `decodescript`.
+#
+# The checkout, the node install, the test run and the check that the
+# node's tests ran are btclib-org/.github's:
+# reusable-integration-bitcoind.yml, called at a tagged commit (section
+# 10 of btclib-org/.github's README.md). What stays here is the trigger,
+# the schedule, the concurrency group, the pinned release and its
+# sha256, and the two environment-variable names
+# tests/integration/conftest.py reads.
+#
+# A required check cannot carry a `paths` filter, a check that never runs
+# blocking the merge, which is the reason section 10 of the
+# organization's standard gives for this workflow's unfiltered
+# pull_request trigger.
+#
+# Here the qa-assets replay (qa-assets.yml's) skips for want of
+# BTCLIB_QA_ASSETS. Its skip message starts `set BTCLIB_`:
+# `skip-reason-prefix` below exempts such a skip from the check that the
+# node's own tests ran, where a testcase skipping for any other reason, a
+# missing bitcoind among them, fails it (btclib-org/.github#1419). The
+# prefix also exempts the BTCLIB_INTEGRATION skip, and the check still
+# fails a run where nothing ran.
+#
+# A schedule too: the job runs on every pull request and on the commit a
+# merge creates, so what the weekly run asks that nothing else does is
+# whether bitcoincore.org still serves the tarball pinned below
+
+on:
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "54 5 * * 2"
+  # the trigger set of the other gates: main so that the commit a merge
+  # creates is asked too, the pull request so that the merge result is,
+  # and workflow_call because release.yml calls this before it publishes
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      concurrency-suffix:
+        description: >
+          Appended to the concurrency group, and the release workflow is
+          the only caller that passes one. See the group below.
+        type: string
+        default: ""
+  workflow_dispatch:
+  pull_request:
+    # ready_for_review, so a pull request marked ready gets the run the
+    # draft condition withheld; closed, so that the landing falls in this
+    # pull request's own concurrency group and cancels the run it
+    # supersedes, the called job declining the real work on it
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+
+# least privilege for the GITHUB_TOKEN: nothing here writes, and the
+# tarball is fetched from bitcoincore.org, which does not know this token
+permissions:
+  contents: read
+
+# named literally rather than through github.workflow, which in a called
+# workflow is the caller's name; keyed on the pull request's own number,
+# which no push's github.ref can equal; and the suffix keeps a release run
+# out of the branch groups (btclib-org/.github#1083)
+concurrency:
+  group: >-
+    integration-bitcoind-${{ github.event.pull_request.number ||
+    github.ref }}${{ inputs.concurrency-suffix }}
+  cancel-in-progress: true
+
+jobs:
+  regtest:
+    uses: btclib-org/.github/.github/workflows/reusable-integration-bitcoind.yml@72e0222ef466daf096e3ac8d07e2ba59c0544b1a # v2026.10.28
+    # a caller's permissions: block bounds the called workflow and refuses
+    # rather than trims
+    permissions:
+      contents: read
+    with:
+      # the release under test, and the sha256 of its linux tarball as the
+      # guix builders attested it in bitcoin-core/guix.sigs. Pinned rather
+      # than resolved to "latest": a run that installs whatever is newest
+      # reports the day Core released rather than the day this tree
+      # changed. btclib-wallet's integration-bitcoind.yml pins the same
+      # two values
+      bitcoind-version: "31.1"
+      bitcoind-sha256: >-
+        b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e
+      # tests/integration/conftest.py's own two switches
+      integration-env-var: BTCLIB_INTEGRATION
+      bitcoind-path-env-var: BTCLIB_BITCOIND
+      # the skips the header names, exempt for the reason it gives
+      skip-reason-prefix: "set BTCLIB_"

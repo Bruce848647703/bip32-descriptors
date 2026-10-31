@@ -1,0 +1,80 @@
+---
+name: qa-assets
+
+# Bitcoin Core's descriptor fuzz corpus, replayed through this package's
+# parser. Core's qa-assets grows as its fuzzers run, so a parser that
+# handled last week's inputs may not handle this week's: a clock asks,
+# because the corpus changes with no commit here.
+# tests/integration/qa_assets_test.py is the replay; a failure there is an
+# exception outside the families tests/exception_family_test.py holds,
+# named with the input that raised it.
+#
+# Informational: no aggregate job, a finding being an issue against a
+# parser and not a block on an unrelated merge. The pull request trigger
+# is filtered to this file and to the replay, so a pull request that
+# changes either runs it. The replay adds seconds to the wait on the
+# gates, so section 10's clock rule keeps the trigger. Only the default
+# branch schedules workflows.
+#
+# The checkout is sparse and blobless: Core's qa-assets is large, and the
+# replay reads only the directory listed below.
+on:
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "54 3 * * 2"
+  workflow_dispatch:
+  pull_request:
+    # ready_for_review, so a pull request marked ready gets the run the
+    # draft condition withheld; closed, for the group below
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+    paths:
+      - .github/workflows/qa-assets.yml
+      - tests/integration/qa_assets_test.py
+
+permissions:
+  contents: read
+
+# keyed on the pull request's own number where there is one, so a
+# scheduled or dispatched run keeps a group of its own. No push trigger,
+# so the run in flight is the only reading a merge gets: a closed, merged
+# event queues behind it
+concurrency:
+  group: qa-assets-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !(github.event.action == 'closed' && github.event.pull_request.merged) }}
+
+jobs:
+  replay:
+    name: Replay the fuzz corpus
+    if: >-
+      ${{ !github.event.pull_request.draft
+      && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Checkout qa-assets
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bitcoin-core/qa-assets
+          path: qa-assets
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            fuzz_corpora/descriptor_parse
+      - name: Setup uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+      - name: Name the corpus read
+        run: git -C qa-assets log -1 --format='bitcoin-core/qa-assets %H %cI'
+      - name: Replay
+        env:
+          BTCLIB_QA_ASSETS: ${{ github.workspace }}/qa-assets
+        # no coverage: the floor is a claim about the ordinary run
+        run: >-
+          uv run --locked --no-default-groups --group test
+          pytest tests/integration/qa_assets_test.py -n 0 --no-cov

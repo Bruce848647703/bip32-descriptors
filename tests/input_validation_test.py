@@ -1,0 +1,283 @@
+# Copyright (c) The btclib developers
+# Distributed under the MIT software license, see the accompanying
+# LICENSE file or https://opensource.org/license/mit for the full text.
+
+"""The gate for the two rules about a public function's inputs.
+
+> Every public function guarantees the validation of all its inputs,
+> directly or indirectly. A malformed argument leaves as
+> `BTClibTypeError` or `BTClibValueError`.
+
+btclib's rule, and which of the two classes comes out is not a coin toss
+-- it is the distinction issue btclib-org/btclib#814 settled, so this file
+drives the two separately:
+
+- **a value of a type the signature does not declare** is the caller's
+  own mistake, and leaves as a `BTClibTypeError`.
+- **a value of a declared type that no valid input carries** is a fact
+  about the input, and leaves as a `BTClibException`.
+
+btclib's own `input_validation_test.py` walks btclib, and this one walks
+this package with the same vocabulary.
+
+A function of this package that hands its argument on to ecc
+-- a key to `scalar_from_prv_key` or `point_from_pub_key` most often --
+lets that package's refusal through, and its classes are
+`EccTypeError` and `EccException` (issue
+btclib-org/btclib#2282): each rule accepts the class of either package,
+`tests/exception_family_test.py` holding the pair, and nothing else.
+
+## How it calls what it calls
+
+The input types are few and well bounded, most of them named in btclib's
+`alias.py` and the rest beside their converters.
+`_WRONG_TYPE` and `_WRONG_VALUE` give each of them values of the two
+kinds, and the walk finds every public module-level function whose
+*required* parameters are all of those types. Those it can call with no
+fixture and no knowledge of what the function does.
+
+Every argument is wrong at once, which is not weaker than one wrong
+argument among valid ones: whichever the function refuses first, the rule
+says how it must refuse it. And it needs no valid values, which is what
+makes the walk automatic -- a valid `Octets` is 20 bytes for one
+function, 32 for another and any length for a third, so the table of
+those is the hand-written thing this avoids.
+
+## What it does not reach
+
+A **parameter with a default** is never driven: to reach it the arguments
+before it would have to be valid, which is the table this design is built
+to do without. `tests/curve_parameter_test.py` and
+`tests/bool_parameter_test.py` carry that table for the two families of
+them large enough to be walked.
+
+A **method**, and a function taking a `KeyExpression`, a `Descriptor` or
+a callback, needs a valid instance the vocabulary cannot build, and the
+tests of each module drive those from fixtures instead;
+`tests/prv_keys_contract_test.py` does it for every `prv_keys`.
+`test_the_walk_reaches_what_it_claims` pins what the walk does find, so a
+narrowing of it fails here rather than quietly running over less.
+
+A function answering a `bool` about a wrong value would answer `False`
+rather than refuse it; no function the walk reaches here answers one.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib
+import importlib.util
+from collections.abc import Callable, Iterator
+from functools import partial
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tests.exception_family_test import ECC_PACKAGE, EXCEPTIONS, TYPE_ERRORS
+
+_LIBRARY = Path(__file__).parents[1] / "src" / "bip32_descriptors"
+# the libraries declaring the input types this package takes, the rest
+# being declared at module level in this package: btclib, and
+# `ECC_PACKAGE` wherever it is installed, btclib binding its curve types
+# from it (issue btclib-org/btclib#2282)
+_LIBRARIES = [
+    Path(spec.origin).parent
+    for name in ("btclib", ECC_PACKAGE)
+    if (spec := importlib.util.find_spec(name)) and spec.origin
+]
+# where each of them declares its aliases
+_ALIAS_PYS = {library / "alias.py" for library in _LIBRARIES}
+
+# a value of no type the alias declares: the caller's own mistake, and a
+# call mypy refuses. The tuples are read round-robin so that a function
+# taking three parameters of one type is called with three different
+# wrong values. Constants and not a strategy: what this gate reports has
+# to be the same on two runs, the lists below being read as statements
+# about the tree
+_WRONG_TYPE: dict[str, tuple[Any, ...]] = {
+    "BIP32Key": (None, 1.5),
+    "BinaryData": (None, 1.5),
+    "DerPath": (None, 1.5),
+    "Octets": (None, 1.5, tuple(range(4))),
+    "String": (None, 1.5, 1),
+}
+
+# a value of a declared type that no valid input carries: a fact about
+# the input. Every one
+# of these type checks -- that is what puts it in this dict rather than
+# in the one above -- so a `# type: ignore` is never needed to build the
+# call, which is the same line drawn twice
+_WRONG_VALUE: dict[str, tuple[Any, ...]] = {
+    "BIP32Key": ("not an xkey",),
+    "BinaryData": ("not hex at all",),
+    # a string no path spelling reads, an index below zero, and one above
+    # the four bytes a BIP32 index has
+    "DerPath": ("m/x", -1, [2**32]),
+    # a hex string that is not hex, and one of odd length
+    "Octets": ("not hex at all", "9"),
+    "String": ("not an address",),
+}
+
+
+def _alias_of(annotation: ast.expr) -> str | None:
+    """Return the input type an annotation names, `X | None` included."""
+    name = ast.unparse(annotation).replace(" | None", "").strip()
+    return name if name in _WRONG_TYPE else None
+
+
+def _drivable() -> dict[str, list[str]]:
+    """Return every public function the vocabulary can call, by dotted name.
+
+    Required parameters only: what carries a default is what a caller may
+    leave out, so a function is driven on the arguments it insists on.
+    All of them have to be in the vocabulary -- one `Tx` and the walk has
+    nothing to pass.
+    """
+    found: dict[str, list[str]] = {}
+    for path in sorted(_LIBRARY.rglob("*.py")):
+        module = ".".join(path.relative_to(_LIBRARY.parent).with_suffix("").parts)
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
+                continue
+            positional = [*node.args.posonlyargs, *node.args.args]
+            required = positional[: len(positional) - len(node.args.defaults)]
+            # `is not None` narrows for mypy and never filters: mypy runs
+            # strict over this package, so a parameter without an
+            # annotation is a state the library does not reach
+            annotations = [a.annotation for a in required if a.annotation is not None]
+            aliases = [_alias_of(a) for a in annotations]
+            if required and len(aliases) == len(required) and all(aliases):
+                found[f"{module}.{node.name}"] = [a for a in aliases if a]
+    return found
+
+
+_DRIVABLE = _drivable()
+
+
+def _calls(
+    dotted: str, vocabulary: dict[str, tuple[Any, ...]]
+) -> Iterator[Callable[[], Any]]:
+    """Yield one prepared call per round, every argument wrong at once.
+
+    The vocabulary is the parameter, and it is the whole of what tells the
+    two rules apart: the same walk, the same function, two kinds of wrong
+    value.
+    """
+    module_name, _, name = dotted.rpartition(".")
+    function = getattr(importlib.import_module(module_name), name)
+    aliases = _DRIVABLE[dotted]
+    for round_ in range(max(len(vocabulary[a]) for a in aliases)):
+        args = [vocabulary[a][round_ % len(vocabulary[a])] for a in aliases]
+        # partial and not a lambda, which would close over the loop
+        # variables and be read on a later round
+        yield partial(function, *args)
+
+
+_DRIVEN = sorted(_DRIVABLE)
+
+
+@pytest.mark.parametrize("dotted", _DRIVEN)
+def test_a_wrong_type_leaves_as_a_btclib_type_error(dotted: str) -> None:
+    """The first rule, and it has no exceptions.
+
+    `BTClibTypeError` and not `BTClibException`: this is where the class
+    is the point. A bare `TypeError` fails here as a `BTClibValueError`
+    does -- the first is a leak from underneath the library, the second
+    is the library calling a caller's mistake a fact about the input.
+    """
+    for call in _calls(dotted, _WRONG_TYPE):
+        with pytest.raises(TYPE_ERRORS):
+            call()
+
+
+@pytest.mark.parametrize("dotted", _DRIVEN)
+def test_a_wrong_value_leaves_as_a_btclib_exception(dotted: str) -> None:
+    """The second rule, over what the walk drives.
+
+    `BTClibException` and not one of the three: which of them a malformed
+    value deserves is the function's to decide -- a size is a
+    `BTClibValueError`, a bool where a number belongs is a
+    `BTClibTypeError` -- and the contract a caller is given is the base.
+    """
+    for call in _calls(dotted, _WRONG_VALUE):
+        with pytest.raises(EXCEPTIONS):
+            call()
+
+
+def test_the_vocabulary_is_the_libraries_input_types() -> None:
+    """A renamed type would narrow the walk without failing anything.
+
+    Every name in the two vocabularies is still declared, in this package
+    or in one of `_LIBRARIES`, and every type an `alias.py` of those or a
+    module of this package declares and a public parameter of this package
+    is annotated with is either in the vocabulary or named below with the
+    reason it is not.
+    """
+    declared: set[str] = set()
+    in_alias_py: set[str] = set()
+    own: set[str] = set()
+    annotated: set[str] = set()
+    for path in sorted(
+        [*_LIBRARY.rglob("*.py"), *(p for d in _LIBRARIES for p in d.rglob("*.py"))]
+    ):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names = {
+            node.targets[0].id
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id[0].isupper()
+        }
+        declared |= names
+        if not path.is_relative_to(_LIBRARY):
+            if path in _ALIAS_PYS:
+                in_alias_py |= names
+            continue
+        own |= names
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
+                continue
+            arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            annotated |= {
+                ast.unparse(a.annotation).replace(" | None", "").strip()
+                for a in arguments
+                if a.annotation is not None
+            }
+
+    assert set(_WRONG_TYPE) == set(_WRONG_VALUE)
+    assert set(_WRONG_TYPE) <= declared
+
+    without_a_wrong_value = {
+        # behind a default wherever a public parameter takes it, and a
+        # parameter with a default is never driven
+        "PrvKeys",
+    }
+    covered = (in_alias_py | own) & annotated
+    assert covered <= set(_WRONG_TYPE) | without_a_wrong_value
+    # an exemption that matches nothing, or names a type the walk drives,
+    # is one left behind
+    assert without_a_wrong_value <= covered
+    assert not without_a_wrong_value & set(_WRONG_TYPE)
+
+
+def test_the_walk_reaches_what_it_claims() -> None:
+    """The shapes the walk must find, and two it must not.
+
+    A walk that found nothing would pass every test above. One function
+    per shape it has to reach -- a single parameter, two of different
+    types, one behind a default it must ignore -- and the two kinds it
+    must leave alone: a private name, and a function whose required
+    parameters are not all in the vocabulary.
+    """
+    assert _DRIVABLE["bip32_descriptors.bip32.der_path.str_from_der_path"] == [
+        "DerPath"
+    ]
+    assert _DRIVABLE["bip32_descriptors.bip32.bip32.derive"] == ["BIP32Key", "DerPath"]
+    # `version` carries a default and is not driven
+    assert _DRIVABLE["bip32_descriptors.bip32.bip32.rootxprv_from_seed"] == ["Octets"]
+
+    assert "bip32_descriptors.bip32.bip32._derive" not in _DRIVABLE
+    # a required parameter the vocabulary cannot build: a KeyExpression
+    assert "bip32_descriptors.descriptors.descriptors.derived_origin" not in _DRIVABLE

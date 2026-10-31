@@ -1,0 +1,384 @@
+# Copyright (c) The btclib developers
+# Distributed under the MIT software license, see the accompanying
+# LICENSE file or https://opensource.org/license/mit for the full text.
+
+"""What `tests/_data/README.md` must not say about itself.
+
+A stated count is a line every open branch has to edit, so a pull request
+vendoring a vector file is guaranteed to conflict on it, and two branches
+moving it to the *same* new number merge with nothing to decide, into a
+number that is wrong. The README has no `merge=union` driver to fall back
+on, and cannot have one: union keeps both sides' added lines, which is
+right for a list of bullets and nonsense for the prose around them. So the
+number goes, the lists stay -- they are the fact the number summarized --
+and the Summary carries the `git ls-files` command that derives it on
+demand. btclib's own `vendored_data_test.py` holds btclib's README to the
+same rule, and this file is that test over this README.
+
+The one exception is a count of what upstream published, which pins a
+vendored file rather than measuring this tree. A numeral -- a digit run,
+or a spelled-out numeral as a word -- is forbidden anywhere in the README
+unless `_NOT_A_COUNT` accounts for it, or the line it sits on is named in
+`_EXEMPT` with the reason beside it. The general form of "a count in
+prose" is not regular, so a pattern loose enough to catch every wrong
+shape also catches sentences that are not wrong (issue
+btclib-org/btclib#1633): what is enumerated instead is what is
+*permitted*, every line of `_EXEMPT` found by running the pattern against
+the README and reading what it caught.
+
+The carve-outs are mechanical rather than semantic:
+
+- **A fenced block is not scanned, whatever its language.** The
+  ` ```text ` ones are the pin metadata -- `repo`, `path`, `commit`,
+  `blob`, `pulled`, `behind` -- which the README's own "Reading an entry"
+  section already defines as facts of a pin, on every entry. The
+  ` ```shell ` ones are commands, and a digit in a command is an argument.
+- **"one" and "zero" are matched as digits, never as spelled words.** As
+  words they are pronouns and articles ("one of them", "not one", "no
+  one") far more often than counts in the README's prose.
+- **A numeral naming something is subtracted before `_NUMERAL` runs.**
+  `_NOT_A_COUNT` takes out an ISO date, a `bip-`/`slip-` or NIST `P-`
+  number, an `issue #N`, an `ISS N` or an `owner/repo#N` reference, a
+  Wycheproof `tcId N` and a dotted version, each of which names a thing
+  rather than counting one. A hyphen is what puts a specification number
+  in front of the pattern at all: a digit run is matched between word
+  boundaries, which `bip-0327` offers and a fused `BIP0327` does not
+  (issue btclib-org/btclib#1684).
+
+An exemption pins its line verbatim, so editing a line that carries one
+means editing its entry too, and the guards below name the line they are
+unhappy about.
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+
+_README = Path(__file__).parents[1] / "tests" / "_data" / "README.md"
+
+# a digit run, or a spelled-out cardinal as a whole word ("one" and "zero"
+# excepted -- see the module docstring)
+_NUMERAL = re.compile(
+    r"(?i)\b(?:\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+    r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+    r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+    r"hundred|thousand)\b"
+)
+
+# the numerals that name something rather than count it, subtracted before
+# _NUMERAL runs: an ISO date at day or month precision, a specification
+# identifier as the bips and slips repositories spell one in a path and as
+# NIST names a curve, an issue in either form the prose uses or as an
+# `owner/repo#N` reference, a Wycheproof test-case identifier, and a
+# dotted version -- three shapes rather than one, a version appearing here after
+# a name, in three components, and with a pre-release suffix. The first takes
+# the version and never the name in front of it, which is what keeps subtracting
+# able only to leave a numeral visible and never to hide one. A decimal is not
+# among them on purpose: a size in megabytes or a percentage is a measurement,
+# which is a count and wants a line of its own. No `rfc-`: an RFC is cited here
+# with a space rather than a hyphen, and subtracting `RFC \d+` as well empties
+# no line that the shapes below do not already empty
+_NOT_A_COUNT = re.compile(
+    r"\b\d{4}-\d{2}(?:-\d{2})?\b"
+    r"|(?i:\b(?:bip|slip)-\d+)|\bP-\d+"
+    r"|(?i:\bissues?[ /]#?\d+)|\bISS \d+|\b[\w.-]+/[\w.-]+#\d+"
+    r"|\btcId \d+"
+    r"|(?<=[a-zA-Z]-)\b\d+(?:\.\d+)+"
+    r"|\b\d+\.\d+\.\d+\b"
+    r"|\b\d+(?:\.\d+)+(?=(?i:rc|a|b|dev|post)\d)"
+)
+
+# the reason an exempted line carries, named once and reused: what reaches
+# _EXEMPT is the one exception, a count of what upstream published, and a
+# numeral that is not one is a numeral the README drops
+_UPSTREAM_FACT = (
+    "a fact of the upstream specification or vendored artefact,"
+    " not a count of this tree"
+)
+
+# built by running _NUMERAL against tests/_data/README.md's prose, past
+# _NOT_A_COUNT (every line outside a fenced ```text``` block, see
+# _prose_lines) and classifying every hit: each is named here with its
+# reason, or the README no longer states it (issue btclib-org/btclib#1633)
+_EXEMPT: dict[str, str] = {
+    '"use multipath_descriptors first" -- a coincidence of the raw `<0;1>`': _UPSTREAM_FACT,
+    "34 extended keys of test vectors 1 to 4 appear verbatim in the pinned": _UPSTREAM_FACT,
+    "BIP328's, and a `key_sort` applied here reaches none of the three": _UPSTREAM_FACT,
+    "Four of the calls are not here, being loops rather than literals: the": _UPSTREAM_FACT,
+    "The comparison is on git blob SHA-1, not sha256: it is what a tree entry": _UPSTREAM_FACT,
+    "The original pin was the commit that *added* test vector 4 rather than": _UPSTREAM_FACT,
+    "Verdict: **transcribed**, complete: all three aggregate keys, the": _UPSTREAM_FACT,
+    "Verdict: **transcribed**. All 16 invalid extended keys are exactly the 16": _UPSTREAM_FACT,
+    "`BIP390_INVALID`: the six valid descriptors with the scripts they produce": _UPSTREAM_FACT,
+    "`multi_a()` of twenty-one keys, the three `and_b()` chains that pass the": _UPSTREAM_FACT,
+    "and again on 2026-08-06 — both times still test vectors 1 to 5 and no": _UPSTREAM_FACT,
+    "asserting that a taptree of exactly 128 nesting levels parses.": _UPSTREAM_FACT,
+    "at each index listed, and all fourteen invalid ones with the message each": _UPSTREAM_FACT,
+    "cardinality-above-two and derivation-before-aggregation ones, each a": _UPSTREAM_FACT,
+    "every invalid one with the message btclib refuses it with — two of those": _UPSTREAM_FACT,
+    "first put these 16 keys into the BIP. The pin above is the tip of the": _UPSTREAM_FACT,
+    "gives the git blob SHA-1 of what that entry pins; what it pins, and": _UPSTREAM_FACT,
+    "header, and the six valid and fourteen invalid descriptors are still the": _UPSTREAM_FACT,
+    "holding all 34 keys, the parent holding 28, which made that pin checkable": _UPSTREAM_FACT,
+    "is refused with. Five further invalid cases there are btclib's own, for": _UPSTREAM_FACT,
+    "key-information vector, byte for byte. Four": _UPSTREAM_FACT,
+    "no upstream file and no byte comparison to make. All four seeds and all": _UPSTREAM_FACT,
+    "of BIP32 test vector 5 — no omissions, no local additions — both at the": _UPSTREAM_FACT,
+    "of the Invalid policies section's nine are checked too, in": _UPSTREAM_FACT,
+    "p2wsh ops, stack and script-size limits, and the two nestings that reach a": _UPSTREAM_FACT,
+    "pattern: our 34 valid plus 14 of the 16 invalid, the other 2 being the": _UPSTREAM_FACT,
+    "property of the template text alone. The other five are not:": _UPSTREAM_FACT,
+    "same placeholder need the two occurrences compared against each other,": _UPSTREAM_FACT,
+    "sixth, every extended key in it one of ours, 48 matching the key": _UPSTREAM_FACT,
+    "text, and the derivation counts match: 6, 6, 2, 3.": _UPSTREAM_FACT,
+    "thousand elements on the stack. `tests/descriptors/miniscript_test.py`": _UPSTREAM_FACT,
+    "vector and the multipath descriptor the two compile to, checked branch by": _UPSTREAM_FACT,
+    "zero-prefix keys of test vector 5, which serialize outside it — the pin": _UPSTREAM_FACT,
+}
+
+
+def _countable(line: str) -> str:
+    """`line` with the numerals that name rather than count removed."""
+    return _NOT_A_COUNT.sub(" ", line)
+
+
+def _prose_lines() -> list[str]:
+    """Every line of the README outside a fenced ```text``` block."""
+    in_fence = False
+    lines = []
+    for line in _README.read_text(encoding="utf-8").split("\n"):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            lines.append(line)
+    return lines
+
+
+def test_every_numeral_outside_the_allowlist_is_a_count_of_this_tree() -> None:
+    """The README states no count of what this tree holds.
+
+    A numeral on a line `_EXEMPT` does not name is either a count of what
+    this tree holds -- drop it, the way "the eight BIP327 files" became
+    "the BIP327 files" in btclib's README -- or it is the one exception, a
+    count of what upstream published, and belongs in `_EXEMPT` with the
+    reason beside it.
+    """
+    offenders = sorted(
+        {
+            line
+            for line in _prose_lines()
+            if _NUMERAL.search(_countable(line)) and line not in _EXEMPT
+        }
+    )
+    assert not offenders, (
+        "tests/_data/README.md states a count of this tree,"
+        f" on a line _EXEMPT does not name: {offenders!r}"
+    )
+
+
+def test_every_exemption_is_still_a_line_that_needs_one() -> None:
+    """An exemption outliving its line is dormant, not gone.
+
+    Each of `_EXEMPT`'s lines must still be in the file, verbatim, and must
+    still match `_NUMERAL` once `_NOT_A_COUNT` has run over it -- a line the
+    README no longer carries, or whose every numeral is a date or an identifier,
+    is an exemption nothing needs and nothing here would otherwise notice.
+    """
+    lines = set(_prose_lines())
+    missing = sorted(line for line in _EXEMPT if line not in lines)
+    assert not missing, f"exempted, and no longer in the README: {missing!r}"
+    stale = sorted(line for line in _EXEMPT if not _NUMERAL.search(_countable(line)))
+    assert not stale, f"exempted, and states no numeral any more: {stale!r}"
+
+
+def test_the_pattern_still_matches() -> None:
+    """The guard above passes for free if `_NUMERAL` matches nothing.
+
+    Which is the failure mode of every assertion written in the negative,
+    and the one the file it reads cannot reveal: a pattern reworded past
+    the text it forbids leaves a green test guarding an empty set. The
+    strings are counts in the shapes issue btclib-org/btclib#1633 measured
+    a shape-based pattern missing, and the ones btclib's guard caught.
+    """
+    for text in (
+        "### `tests/fetch/_data/*` — seven response bodies",
+        "- the seven under `tests/fetch/_data/` are response bodies",
+        "7 files.",
+        "- 7 files here",
+        "49 files. Against a pinned blob:",
+        "Fifty files. Against a pinned blob:",
+    ):
+        assert _NUMERAL.search(_countable(text)), text
+
+
+def test_a_numeral_that_names_something_is_subtracted_and_a_count_is_not() -> None:
+    """`_NOT_A_COUNT` fails in two directions, and only one of them is loud.
+
+    A shape that stops matching puts its lines back in front of `_NUMERAL`,
+    and the guard above says which; a shape that reaches past what it names
+    swallows the count beside it and the guard goes quiet. The second group
+    is that half: each line states a numeral `_NUMERAL` reads as a count
+    *and* carries a date, an identifier or a version, and each is exempted
+    for that numeral alone.
+    """
+    for named in (
+        "Pulled 2020-06-08, except `block_200000.bin`, 2020-06-09.",
+        "All of them entered upstream in 2026-08, after 3.2.0 shipped, so the",
+        "BIP322 files on 2026-08-08, and the Wycheproof files with the licence",
+        "The vectors of `bip-0327/vectors/`, vendored whole",
+        "P-192, P-224, P-256, P-384 and P-521, as `tests/ecc/rfc6979_test.py`",
+        "which engine the vectors feed (issue 168).",
+        "is not implemented (issue #187), so there is nothing yet for those to",
+        "[ISS 1120](https://github.com/btclib-org/btclib/issues/1120) is where",
+        "which issue btclib-org/btclib#381 keeps out of the signing surface",
+        "the BIP is a draft, `bitcoin/bips#2070`, whose path lives",
+        "`Untruncatedhash` case of the pair as tcId 190.",
+        "licence that is not MIT: Apache-2.0, whose condition on redistribution",
+    ):
+        assert not _NUMERAL.search(_countable(named)), named
+    for counted in (
+        '(2024-05-14, "Fix the four test vectors"); and `sig_agg_vectors.json`',
+        "The twelve `scriptPubKey`s reported in issue #123, the five transactions",
+        "`bitcoin/bips#2070` holds the three files",
+        "Verdict: **identical**. SLIP-0039's 1024 words, ten bits each, and the",
+        "3.2.0, where -4 carries the misspelling this pin's commit corrects — a",
+    ):
+        assert _NUMERAL.search(_countable(counted)), counted
+
+
+# a "## " or "### " heading, matched to split the README into sections without
+# a sliding window: a window over-counts a "### " heading's own verdict past
+# the next entry, which is what over-counted btclib's README (issue
+# btclib-org/btclib#1669)
+_SECTION_HEADING = re.compile(r"^#{2,3} .+$", re.MULTILINE)
+
+# a "### " heading that is nothing but one file path in backticks -- a "Not
+# vendored as a file: ..." heading has prose of its own and never matches,
+# which is the point: such an entry has no name to compare the Summary
+# against. The same shape also excludes a heading with trailing prose after
+# the path -- "### `tests/fetch/_data/*` — response bodies" -- which is not
+# transcribed today, so nothing is missed; a transcribed entry written with
+# a trailing dash would drop out of both sets with nothing red to say so
+_VENDORED_FILE_HEADING = re.compile(r"^### `([^`]+)`$")
+
+_TRANSCRIBED_VERDICT = "Verdict: **transcribed**"
+
+_SUMMARY_FILENAME = re.compile(r"`([\w.-]+\.\w+)`")
+
+
+def _sections(text: str) -> list[tuple[str, str]]:
+    """Every heading of `text`, paired with the section text that follows it."""
+    heads = [(m.start(), m.group(0)) for m in _SECTION_HEADING.finditer(text)]
+    return [
+        (
+            heading,
+            text[pos : heads[i + 1][0] if i + 1 < len(heads) else len(text)],
+        )
+        for i, (pos, heading) in enumerate(heads)
+    ]
+
+
+def _transcribed_vendored_files(text: str) -> set[str]:
+    """Basenames of the vendored files whose own entry is transcribed."""
+    return {
+        match.group(1).rsplit("/", 1)[-1]
+        for heading, body in _sections(text)
+        if (match := _VENDORED_FILE_HEADING.match(heading))
+        and _TRANSCRIBED_VERDICT in body
+    }
+
+
+def _summary_transcribed_files(text: str) -> set[str]:
+    """Basenames the Summary lists in its transcribed bullet."""
+    for heading, body in _sections(text):
+        if heading.strip() != "## Summary":
+            continue
+        lines = body.split("\n")
+        start = next(
+            (i for i, line in enumerate(lines) if line.startswith("- transcribed")),
+            None,
+        )
+        if start is None:
+            raise AssertionError(
+                'tests/_data/README.md\'s Summary has no "- transcribed" bullet'
+            )
+        end = start + 1
+        while end < len(lines) and not lines[end].startswith("- "):
+            end += 1
+        return set(_SUMMARY_FILENAME.findall("\n".join(lines[start:end])))
+    raise AssertionError("tests/_data/README.md has no ## Summary section")
+
+
+def test_summary_names_every_transcribed_vendored_file() -> None:
+    """The Summary names exactly the vendored files whose entry is transcribed.
+
+    [ISS 1669](https://github.com/btclib-org/btclib/issues/1669) found
+    the bullet naming fewer files than the entries carry, and naming one,
+    `descriptor_checksums.json`, whose own verdict is **composed
+    locally**, not transcribed. Reading the file by its own `###`
+    sections is what finds either kind of drift; a sliding window over a
+    fixed span of text is not, since it can run past the next entry's own
+    verdict and count it as the current one's.
+    """
+    text = _README.read_text(encoding="utf-8")
+    entries = _transcribed_vendored_files(text)
+    summary = _summary_transcribed_files(text)
+    assert entries == summary, (
+        f"in the entries but not the Summary: {sorted(entries - summary)!r}; "
+        f"in the Summary but not transcribed in the entries: "
+        f"{sorted(summary - entries)!r}"
+    )
+
+
+def test_the_transcribed_comparison_can_actually_fail() -> None:
+    """The check above passes for free if it can never disagree with itself.
+
+    Mirrors `test_the_pattern_still_matches`'s idiom: a synthetic pair,
+    identical but for one file name, proves the comparison distinguishes
+    a matching Summary from a mismatched one rather than only ever
+    confirming the real file, which cannot itself demonstrate that.
+    """
+    heading_and_verdict = (
+        "### `tests/_data/kept.json`\n\n"
+        "Verdict: **transcribed**, for the purpose of this test.\n\n"
+    )
+    matching = heading_and_verdict + (
+        "## Summary\n\n- transcribed, matched:\n  `kept.json`.\n"
+    )
+    mismatched = heading_and_verdict + (
+        "## Summary\n\n- transcribed, matched:\n  `other.json`.\n"
+    )
+
+    assert _transcribed_vendored_files(matching) == _summary_transcribed_files(matching)
+    assert _transcribed_vendored_files(mismatched) != _summary_transcribed_files(
+        mismatched
+    )
+
+
+def test_a_summary_transcribed_read_needs_a_summary_section() -> None:
+    """`_summary_transcribed_files` raises rather than answering an empty set.
+
+    The real README always has a `## Summary`, so nothing in the check
+    above trips this path; a text with none is what does, and is what
+    keeps a rewrite that drops the heading loud instead of silently
+    reading as "the Summary names nothing transcribed".
+    """
+    with pytest.raises(AssertionError, match="no ## Summary section"):
+        _summary_transcribed_files("### `tests/_data/kept.json`\n\nno Summary here.\n")
+
+
+def test_a_summary_transcribed_read_needs_a_transcribed_bullet() -> None:
+    """`_summary_transcribed_files` raises with a message, not `StopIteration`.
+
+    A `## Summary` with no bullet starting "- transcribed" is what trips
+    this: the generator `next()` reads has nothing to give it, and the
+    message is what keeps such a rewrite loud instead of surfacing as an
+    unrelated `RuntimeError` with no README path in it -- the same
+    failure class the sibling test above guards, on the other bullet.
+    """
+    with pytest.raises(AssertionError, match='no "- transcribed" bullet'):
+        _summary_transcribed_files(
+            "### `tests/_data/kept.json`\n\n## Summary\n\n- identical: `kept.json`.\n"
+        )

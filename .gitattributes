@@ -1,0 +1,9 @@
+# The vendored files `tests/_data/README.md` names are held to a git blob
+# SHA-1 over their committed bytes, which `check_vendored_vectors.py` and
+# its test read straight off the disk. `-text` is what keeps a checkout
+# with `core.autocrlf=true` (Git for Windows' default) from converting
+# them, so those bytes are the ones on disk on every platform.
+tests/_data/descriptor_checksums.json -text
+tests/_data/miniscript_fixed_tests.json -text
+tests/bip32/_data/bip32_invalid_keys.json -text
+tests/bip32/_data/bip32_test_vectors.json -text
