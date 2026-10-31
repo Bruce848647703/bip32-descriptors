@@ -15,10 +15,9 @@ prefix carry: a four-octet master fingerprint and a derivation path of
 counterparty rather than computed locally, which is what this harness
 is for.
 
-`String`, which `.b58decode` and `bip322.Sig.b64decode` alike take,
-already admits bytes -- `str | bytes | bytearray | memoryview` -- so
-`data` reaches `.b58decode` unmodified rather than through a decode step
-`.parse` and `.b64decode` elsewhere in this tree do not need either.
+`String`, which `.b58decode` takes, already admits bytes -- `str |
+bytes | bytearray | memoryview` -- so `data` reaches `.b58decode`
+unmodified, with no decode step.
 
 A crash on hostile bytes is a defect in one of the three decoders or in
 what reads their answer, never in this harness: `data` is unconstrained
