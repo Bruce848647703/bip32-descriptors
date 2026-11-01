@@ -80,10 +80,8 @@ which may import which.
 Every refusal is btclib's `BTClibValueError` or `BTClibTypeError`, or
 ecc's class of the same kind where an argument reaches that package.
 
-Signing, partially signed transactions and wallets are not here:
-[btclib-wallet](https://github.com/btclib-org/btclib-wallet) is the
-library above this one, and its psbt updater reads what a descriptor
-expanded at an index knows.
+Signing, partially signed transactions and wallets are not here: they
+are [btclib-wallet](https://github.com/btclib-org/btclib-wallet)'s.
 
 The suite answers to vectors their authors publish -- the BIPs', Bitcoin
 Core's and bitcoin-s's -- and [tests/_data/README.md](./tests/_data/README.md)

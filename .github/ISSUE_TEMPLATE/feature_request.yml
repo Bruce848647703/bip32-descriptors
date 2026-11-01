@@ -10,7 +10,7 @@ body:
         bip32-descriptors is BIP32 extended keys and derivation paths,
         output script descriptors and miniscript: from a key and a
         descriptor to the scripts and addresses it stands for. Signing,
-        psbts and wallets are btclib-wallet's, a library above this one.
+        psbts and wallets are btclib-wallet's.
 
   - type: textarea
     id: what

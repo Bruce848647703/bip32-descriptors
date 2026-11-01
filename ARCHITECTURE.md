@@ -16,7 +16,7 @@ BIP379's language over those keys, and imports `key_expression`.
 policies, and imports both. A descriptor expanded at an index answers
 with what it knows -- scripts, keys, key origins, the taproot tree --
 and writes nothing into a transaction or a psbt: that is btclib-wallet's
-psbt updater, a library above this one.
+psbt updater.
 
 `__init__` imports no module of the package: it loads one when it is
 first asked for.

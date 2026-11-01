@@ -24,11 +24,10 @@ the same bytes from a psbt carrying the same signatures.
 not make all at once: the scripts and the key origins BIP174's Updater
 writes into a psbt, for signers to fill in at their own pace and
 btclib-wallet's `psbt.finalize` to assemble. btclib-wallet's
-`psbt.update_psbt_input` and `psbt.update_psbt_output` are that Updater,
-and read the `Expansion` this returns. This package imports nothing of
-btclib-wallet, which is the direction of the layering: a psbt is a
-transaction being built, and a descriptor is what a wallet knows about
-the outputs it holds.
+`psbt.update_psbt_input` and `psbt.update_psbt_output` are that Updater.
+This package imports nothing of btclib-wallet: a psbt is a transaction
+being built, and a descriptor is what a wallet knows about the outputs
+it holds.
 
 BIP380: https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki
 

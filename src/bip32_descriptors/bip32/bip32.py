@@ -577,12 +577,10 @@ def fingerprint(xkey: BIP32Key) -> bytes:
     what BIP32 defines the fingerprint as and what a `BIP32KeyOrigin`
     names its master with.
 
-    Here and not in a converter, because it is bip32's own idea: nothing
-    outside this module's formats has a fingerprint (issue
-    btclib-org/btclib#1188). Every reader of the four octets is this module's or
-    sits above it -- `derive` below writes a parent's into each child it makes,
-    `crack_prv_key_var` reads one back to tell whether a parent and a child are
-    that pair, and btclib-wallet's psbt origins carry one to name a master.
+    Here and not in a converter, because it is bip32's own idea (issue
+    btclib-org/btclib#1188). `derive` below writes a parent's fingerprint into
+    each child it makes, and `crack_prv_key_var` reads one back to tell whether
+    a parent and a child are that pair.
 
     An xprv answers with its xpub's, the fingerprint being the public
     key's: a pair that gave two would identify one key twice. The
