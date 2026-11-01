@@ -19,6 +19,40 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.2
+
+### rawnode, rawleaf, rawpkh and nested raw, and a tr() inference
+
+`parse` reads `rawnode()`, `rawleaf()`, `rawpkh()`, and `raw()` in `sh()`
+and `wsh()`; `infer_descriptor` uses them for a `tr()` it reads in part;
+`raw()` refuses an empty or whitespace HEX (closes #7) (closes #6).
+
+### A deeply nested tr() leaf infers as its miniscript, on any interpreter
+
+`infer_descriptor` walks a leaf without recursion, so the interpreter's
+stack no longer decides what it answers (closes #54).
+
+### A tr() tree is read leaf by leaf, as Core's tr() loop does
+
+A fault inside a leaf gets Core's answer instead of `unbalanced braces`
+(closes #13) (issue #19).
+
+### Core's miniscript fallback beyond timelocks and multisig context
+
+Wrappers, numbers, hashes, unbalanced brackets and trailing text get the
+refusal Core falls back to (closes #10).
+
+### A key spelled twice in a fragment takes v32.1's origin
+
+`Descriptor.provider` gives Bitcoin Core v32.1's origin, and
+`_taproot_derivations` says why the updater keeps the first (closes #20).
+
+### The prose
+
+`integration-bitcoind.yml` says regtest is a required check (closes #24);
+the README and `ARCHITECTURE.md` stop calling btclib-wallet a library
+above this one (closes #26).
+
 ## v2026.10.31
 
 ### The repository opens with btclib-wallet's bip32 and descriptors
