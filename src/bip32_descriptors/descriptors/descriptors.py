@@ -722,8 +722,17 @@ def _taproot_derivations(
 
     Where one key is spelled more than once, an explicit origin beats one
     `_derived_origin` makes up, and then a plain key's origin beats a
-    participant's. Otherwise the first spelling's origin is the entry's.
-    Bitcoin Core keeps the first spelling's origin, even a made-up one.
+    participant's. Where those ranks tie, the first spelling's origin is
+    the entry's, inside one fragment too, as in `Descriptor._hd_key_paths`.
+    Bitcoin Core keeps the entry `Descriptor.provider` keeps, which inside
+    one fragment is the later of two explicit origins.
+
+    Core's later one wins as a side effect of the ``insert_or_assign`` that
+    bitcoin/bitcoin@b42f7fade0 put in `OriginPubkeyProvider::GetPubKey`.
+    That commit fixes the origin a participant got from two different
+    explicit origins, but neither it nor its pull request says which should
+    win, and no test of Core's spells one key with two different explicit
+    origins.
     """
     origins: dict[bytes, tuple[tuple[bool, bool], BIP32KeyOrigin]] = {}
     hashes: dict[bytes, list[bytes]] = {}
@@ -783,7 +792,7 @@ class Provider:
     """The keys and scripts a caller knows, for `infer_descriptor` to read.
 
     Bitcoin Core's `SigningProvider` without the private keys, at
-    bitcoin/bitcoin@9be056a8a7 (the v31.1 tag). `Descriptor.provider` is
+    bitcoin/bitcoin@f0de87f040 (the v32.1 tag). `Descriptor.provider` is
     what a descriptor expanded at an index tells one, and `merged` joins
     several.
 
@@ -986,9 +995,9 @@ class Descriptor(ABC):
         A key without an origin is its own master, as in Core: a fixed key
         under the first four bytes of its hash160, an extended key under
         its own fingerprint with the path it derives. Where one fragment
-        spells a key twice, the later origin goes in front of the earlier
-        one; where two fragments spell it, the first one's entry stays.
-        Core does both.
+        spells a key twice, an origin the descriptor writes replaces the
+        entry already there, and a made-up one does not; where two
+        fragments spell it, the first one's entry stays. Core does both.
         """
         _assert_prv_keys(prv_keys)
         self._assert_index(index)
@@ -1197,7 +1206,8 @@ class Descriptor(ABC):
         A key without an origin gets the one `_derived_origin` makes up
         for it, as in Bitcoin Core. Where one key is spelled more than
         once, an explicit origin beats a made-up one, and otherwise the
-        first spelling's origin is the entry's.
+        first spelling's origin is the entry's. `_taproot_derivations`
+        says why the first of two explicit origins is kept.
         """
         hd_key_paths: dict[bytes, BIP32KeyOrigin] = {}
         explicit: set[bytes] = set()
@@ -2787,9 +2797,9 @@ def _expanded_key(
 ) -> None:
     """Add a key and its origin to one fragment's entries, as Core does.
 
-    A ``musig()`` adds its participants, then the aggregate. A key with an
-    origin of its own puts it in front of the entry already there, which
-    is Core's `OriginPubkeyProvider::GetPubKey`.
+    A ``musig()`` adds its participants, then the aggregate. A key spelled
+    twice in one fragment gets the entry `Descriptor.provider` describes,
+    as Core's key providers do.
     """
     if key.participants:
         for participant in key.participants:
@@ -2798,11 +2808,10 @@ def _expanded_key(
         entries.setdefault(sec, _aggregate_origin(key, index, network, prv_keys))
         return
     sec = key.sec(index, network, prv_keys)
-    found = entries.setdefault(sec, _derived_origin(replace(key, origin=None), index))
-    if key.origin is not None:
-        entries[sec] = BIP32KeyOrigin(
-            key.origin.master_fingerprint, [*key.origin.der_path, *found.der_path]
-        )
+    if key.origin is None:
+        entries.setdefault(sec, _derived_origin(key, index))
+    else:
+        entries[sec] = _derived_origin(key, index)
 
 
 def _expanded_keys(
@@ -3416,7 +3425,7 @@ def infer_descriptor(
     """Return a script's descriptor, checksummed: Core's `InferDescriptor`.
 
     What `scantxoutset` answers in each `unspents[].desc`, at
-    bitcoin/bitcoin@9be056a8a7 (the v31.1 tag), read from the script and
+    bitcoin/bitcoin@f0de87f040 (the v32.1 tag), read from the script and
     from what `provider` knows. Each key is the public key the script
     holds, behind its origin where the provider knows one. A sorted
     multisig is a ``multi()`` of its keys in the script's order. A key in
