@@ -17,10 +17,14 @@ name: integration-bitcoind
 # sha256, and the two environment-variable names
 # tests/integration/conftest.py reads.
 #
-# A required check cannot carry a `paths` filter, a check that never runs
-# blocking the merge, which is the reason section 10 of the
-# organization's standard gives for this workflow's unfiltered
-# pull_request trigger.
+# `regtest / Regtest against Bitcoin Core` is a required check on main:
+# what it asks is whether Core's `scantxoutset` and `decodescript` answer
+# what this branch records for each descriptor shape and script, and the
+# node is a pinned release verified against a published sha256, so the
+# answer is about this tree. A required check cannot carry a `paths`
+# filter, a check that never runs blocking the merge, which is the reason
+# section 10 of the organization's standard gives for this workflow's
+# unfiltered pull_request trigger.
 #
 # Here the qa-assets replay (qa-assets.yml's) skips for want of
 # BTCLIB_QA_ASSETS. Its skip message starts `set BTCLIB_`:
