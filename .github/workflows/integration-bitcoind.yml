@@ -5,9 +5,11 @@ name: integration-bitcoind
 # a bitcoind to talk to. The node's tests in `tests/integration/` skip
 # without BTCLIB_INTEGRATION, so every other workflow reports them skipped
 # and nothing else asks a real node whether it infers each descriptor
-# shape the way `tests/descriptors/infer_test.py` records. This is where
-# that is asked: a disposable regtest bitcoind, the scripts of each shape
-# paid in a block, `scantxoutset` and `decodescript`.
+# shape the way `tests/descriptors/infer_test.py` records, or what it
+# answers for `OWN_VECTORS`, which ASSURANCE_CASE.md's first claim states.
+# This is where both are asked: a disposable regtest bitcoind, the scripts
+# of each shape paid in a block, `scantxoutset`, `decodescript`,
+# `getdescriptorinfo` and `deriveaddresses`.
 #
 # The checkout, the node install, the test run and the check that the
 # node's tests ran are btclib-org/.github's:

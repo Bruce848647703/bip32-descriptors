@@ -123,10 +123,10 @@ harness = [
 test = [
     { include-group = "harness" },
     { include-group = "bindings" },
-    # the rpc client tests/integration/infer_test.py asks a regtest node
-    # through, and tests/integration/conftest.py starts it with. A test
-    # group's and never a runtime dependency: the package itself imports
-    # it nowhere, and tests/imports_test.py is what says so
+    # the rpc client the node's tests in tests/integration/ ask through,
+    # and tests/integration/conftest.py starts it with. A test group's and
+    # never a runtime dependency: the package itself imports it nowhere,
+    # and tests/imports_test.py is what says so
     "bitcoin-core-rpc>=2026.9.3",
 ]
 lint = [

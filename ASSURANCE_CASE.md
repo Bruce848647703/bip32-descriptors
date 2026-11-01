@@ -21,7 +21,10 @@ page points at it instead of repeating it.
   upstream's at the pinned commit, and reports a pin that is no longer
   upstream's tip. `.github/workflows/integration-bitcoind.yml` asks a
   Bitcoin Core node what it infers for each descriptor shape
-  `tests/descriptors/infer_test.py` records.
+  `tests/descriptors/infer_test.py` records. For each of `OWN_VECTORS` in
+  `tests/descriptors/raw_descriptors_test.py`, it asks the node to refuse
+  the vector and, where the vector names a descriptor Core reads in its
+  place, to derive the vector's script from that one.
 - **Malformed input is refused the way the package says it is.** A
   public function handed an argument it cannot use raises btclib's
   `BTClibTypeError` or `BTClibValueError`, or ecc's class of the same

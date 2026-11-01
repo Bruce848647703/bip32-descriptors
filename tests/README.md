@@ -44,10 +44,10 @@ without the switch that asks for it, and says which switch was off:
 BTCLIB_INTEGRATION=1 uv run pytest tests/integration
 ```
 
-That runs `infer_test.py` against a node of the session's own, in a data
-directory under pytest's `tmp_path` and on ephemeral ports. Name a
-binary with `BTCLIB_BITCOIND=/path/to/bitcoind`, or the one on `PATH`
-is used.
+That runs `infer_test.py` and `raw_descriptors_test.py` against a node
+of the session's own, in a data directory under pytest's `tmp_path` and
+on ephemeral ports. Name a binary with `BTCLIB_BITCOIND=/path/to/bitcoind`,
+or the one on `PATH` is used.
 
 `tests/integration/qa_assets_test.py` needs a checkout of
 [bitcoin-core/qa-assets](https://github.com/bitcoin-core/qa-assets),

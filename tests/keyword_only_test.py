@@ -86,6 +86,8 @@ KEYWORD_ONLY: dict[str, list[str]] = {
     "bip32_descriptors.descriptors:PkDescriptor.__init__": ["network"],
     "bip32_descriptors.descriptors:PkhDescriptor.__init__": ["network"],
     "bip32_descriptors.descriptors:RawDescriptor.__init__": ["network"],
+    "bip32_descriptors.descriptors:RawLeaf.__init__": ["bare"],
+    "bip32_descriptors.descriptors:RawPkhDescriptor.__init__": ["network"],
     "bip32_descriptors.descriptors:RawTrDescriptor.__init__": ["network"],
     "bip32_descriptors.descriptors:ShDescriptor.__init__": ["network"],
     "bip32_descriptors.descriptors:TrDescriptor.__init__": ["network"],
