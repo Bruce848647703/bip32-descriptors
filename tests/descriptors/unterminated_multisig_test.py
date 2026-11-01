@@ -98,6 +98,16 @@ def test_a_multisig_structure_fault_is_not_a_key_fault(
         parse(descriptor)
 
 
+def test_a_multisig_key_ends_at_a_comma_past_a_close() -> None:
+    """Core: Invalid musig() expression.
+
+    Core ends a key at the next comma, and at ")" only once no comma is
+    left, so the first key read here is ``musig()``.
+    """
+    with pytest.raises(BTClibValueError, match=r"^musig\(\) takes at least one key$"):
+        parse(f"tr({_X_ONLY},multi_a(1,musig(),)")
+
+
 @pytest.mark.parametrize("read", [parse, multipath_descriptors])
 @pytest.mark.parametrize(
     "descriptor",
