@@ -19,6 +19,7 @@ import pytest
 
 from bip32_descriptors.descriptors import checksum, parse
 from tests import vector_id
+from tests.descriptors import TR_LEAF_FAULT
 from tests.exception_family_test import VALUE_ERRORS
 
 # each: the descriptor, its checksum, the script it gives
@@ -106,7 +107,7 @@ REFUSED = [
     ),
     (
         "tr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd, pkh(L4rK1yDtCWekvXuE6oXD9jCYfFNV2cWRpVuPLBcCU2z8TrisoyY1))",
-        "not a miniscript fragment",
+        TR_LEAF_FAULT,
     ),
 ]
 

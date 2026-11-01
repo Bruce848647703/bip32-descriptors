@@ -16,6 +16,7 @@ from btclib.key import PrvKeyData
 from bip32_descriptors.descriptors import parse
 from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
+from tests.descriptors import P2WSH_FAULT
 
 _K = PrvKeyData(1).pub.sec.hex()
 _K2 = PrvKeyData(2).pub.sec.hex()
@@ -23,7 +24,6 @@ _X = _K[2:]
 _X2 = _K2[2:]
 _NOT_A_KEY = "^not a key expression$"
 _INVALID_KEY = "^invalid key expression$"
-_P2WSH_FAULT = "^A function is needed within P2WSH$"
 
 
 @pytest.mark.parametrize(
@@ -54,7 +54,7 @@ def test_a_brace_after_a_key_fragment_is_the_key_fault(
 def test_a_brace_after_a_timelock_is_the_fallback(fragment: str) -> None:
     """Core reads the number up to the same bracket and refuses it."""
     descriptor = f"wsh(and_v(v:{fragment}(1){{,pk({_K2})))"
-    with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         parse(descriptor)
 
 

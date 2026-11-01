@@ -11,3 +11,8 @@ through `parse` and written back through `str`, which is where
 the wildcards, the two hardening symbols, the WIF and the xprv -- and a
 second module would be those same cases reached by a private function.
 """
+
+# what Bitcoin Core v31.1 names where its miniscript parser fails without
+# naming a key, inside wsh() and in a tr() leaf
+P2WSH_FAULT = "^A function is needed within P2WSH$"
+TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"

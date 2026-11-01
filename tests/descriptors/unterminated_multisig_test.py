@@ -16,12 +16,11 @@ from btclib.exceptions import BTClibValueError
 from btclib.key import PrvKeyData
 
 from bip32_descriptors.descriptors import Descriptor, multipath_descriptors, parse
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 
 _KEY = PrvKeyData(1).pub.sec.hex()
 _X_ONLY = _KEY[2:]
 _STRUCTURAL = "not a descriptor expression: expected name(arguments)"
-_P2WSH_FAULT = "A function is needed within P2WSH"
-_TR_LEAF_FAULT = r"tr\(\) leaf is not a valid descriptor function"
 
 
 @pytest.mark.parametrize("read", [parse, multipath_descriptors])
@@ -57,43 +56,37 @@ def test_a_multisig_key_is_read_before_its_trailing_structure(
 @pytest.mark.parametrize(
     "descriptor,message",
     [
-        (f"wsh(multi(x,[dead]]{_KEY},{_KEY})", r"unbalanced brackets in multi\(\)"),
-        (
-            f"wsh(multi(9223372036854775808,[dead]]{_KEY},{_KEY})",
-            r"unbalanced brackets in multi\(\)",
-        ),
-        (
-            f"wsh(multi(-9223372036854775809,[dead]]{_KEY},{_KEY})",
-            r"unbalanced brackets in multi\(\)",
-        ),
+        (f"wsh(multi(x,[dead]]{_KEY},{_KEY})", P2WSH_FAULT),
+        (f"wsh(multi(9223372036854775808,[dead]]{_KEY},{_KEY})", P2WSH_FAULT),
+        (f"wsh(multi(-9223372036854775809,[dead]]{_KEY},{_KEY})", P2WSH_FAULT),
         pytest.param(
             f"wsh(multi({'9' * 5000},[dead]]{_KEY},{_KEY})",
-            r"unbalanced brackets in multi\(\)",
+            P2WSH_FAULT,
             id="threshold-of-5000-digits",
         ),
-        (f"wsh(multi(1,,[dead]]{_KEY},{_KEY})", r"unbalanced brackets in multi\(\)"),
-        (f"wsh(multi(1,{_KEY},{_KEY})", r"unbalanced brackets in multi\(\)"),
-        (f"wsh(multi(1,{_KEY},[dead]]{_KEY})", r"unbalanced brackets in multi\(\)"),
-        (f"wsh(multi(1,{_KEY}),{_KEY}))", "trailing characters after the miniscript"),
-        (f"wsh(multi(1,){_KEY},{_KEY}))", r"empty key in multi\(\)"),
+        (f"wsh(multi(1,,[dead]]{_KEY},{_KEY})", P2WSH_FAULT),
+        (f"wsh(multi(1,{_KEY},{_KEY})", P2WSH_FAULT),
+        (f"wsh(multi(1,{_KEY},[dead]]{_KEY})", P2WSH_FAULT),
+        (f"wsh(multi(1,{_KEY}),{_KEY}))", "^trailing characters after the miniscript$"),
+        (f"wsh(multi(1,){_KEY},{_KEY}))", P2WSH_FAULT),
         (
             f"wsh(and_v(v:pk({_KEY}),multi_a(1,[dead]{_KEY}){_KEY},{_KEY})))",
-            _P2WSH_FAULT,
+            P2WSH_FAULT,
         ),
         (
             (
                 f"tr({_X_ONLY},and_v(v:pk({_X_ONLY}),"
                 f"multi(1,[dead]{_X_ONLY}){_X_ONLY},{_X_ONLY})))"
             ),
-            _TR_LEAF_FAULT,
+            TR_LEAF_FAULT,
         ),
         (
             f"wsh(and_v(v:pk({_KEY}),multi_a(1,[dead]]{_KEY},{_KEY})",
-            _P2WSH_FAULT,
+            P2WSH_FAULT,
         ),
         (
             f"tr({_X_ONLY},and_v(v:pk({_X_ONLY}),multi(1,[dead]]{_X_ONLY},{_X_ONLY})",
-            _TR_LEAF_FAULT,
+            TR_LEAF_FAULT,
         ),
     ],
 )
@@ -101,7 +94,7 @@ def test_a_multisig_structure_fault_is_not_a_key_fault(
     descriptor: str, message: str
 ) -> None:
     """Core refuses these as structure and names no key fault."""
-    with pytest.raises(BTClibValueError, match=f"^{message}$"):
+    with pytest.raises(BTClibValueError, match=message):
         parse(descriptor)
 
 

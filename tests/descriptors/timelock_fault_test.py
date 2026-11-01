@@ -19,11 +19,10 @@ from btclib.key import PrvKeyData
 from bip32_descriptors.bip32 import rootxprv_from_seed, xpub_from_xprv
 from bip32_descriptors.descriptors import add_checksum, multipath_descriptors, parse
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 
 _XPUB = xpub_from_xprv(rootxprv_from_seed(bytes(range(16))))
 _X_ONLY = PrvKeyData(1).pub.sec.hex()[2:]
-_P2WSH_FAULT = "^A function is needed within P2WSH$"
-_TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"
 
 
 @pytest.mark.parametrize("fragment", ["older", "after"])
@@ -36,9 +35,9 @@ def test_a_bad_timelock_reports_the_p2wsh_fallback(
     text = f"wsh(and_v(v:pk({_XPUB}/0/*),{fragment}({argument})))"
     if wrapped:
         text = f"sh({text})"
-    with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         parse(text)
-    with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         multipath_descriptors(text)
 
 
@@ -58,9 +57,9 @@ def test_a_bad_timelock_in_a_tr_leaf_reports_the_leaf_fallback(
     """Parsing and multipath expansion report the same fault in a tr() leaf."""
     leaf = f"{fragment}({argument})"
     text = f"tr({_X_ONLY},{tree.format(key=f'{_XPUB}/0/*', leaf=leaf)})"
-    with pytest.raises(BTClibValueError, match=_TR_LEAF_FAULT):
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
         parse(text)
-    with pytest.raises(BTClibValueError, match=_TR_LEAF_FAULT):
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
         multipath_descriptors(text)
 
 
@@ -75,7 +74,7 @@ def test_a_key_fault_before_the_timelock_in_a_tr_leaf_is_preserved() -> None:
 def test_a_multipath_key_does_not_expand_a_timelock_argument(fragment: str) -> None:
     """The reported step fault follows a valid multipath key, not its length."""
     text = f"wsh(and_v(v:pk({_XPUB}/<0;1>/*),{fragment}(<1;2>)))"
-    with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         multipath_descriptors(text)
     with pytest.raises(
         BTClibValueError,
@@ -94,7 +93,7 @@ def test_a_key_fault_before_the_timelock_is_preserved() -> None:
 def test_a_timelock_fault_before_a_key_is_not_replaced_by_it() -> None:
     """A later key is not read once the timelock's number has failed."""
     text = "wsh(and_v(v:older(<1;2>),pk(nope)))"
-    with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         multipath_descriptors(text)
 
 

@@ -16,11 +16,10 @@ from btclib.key import PrvKeyData
 from bip32_descriptors.descriptors import parse
 from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 
 _KEY = PrvKeyData(1).pub.sec.hex()
 _X_ONLY = _KEY[2:]
-_P2WSH_FAULT = "^A function is needed within P2WSH$"
-_TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"
 _KEY_FAULT = "^invalid key expression$"
 
 
@@ -29,25 +28,25 @@ _KEY_FAULT = "^invalid key expression$"
     [
         (
             f"tr({_X_ONLY},and_v(v:pk({_X_ONLY}),multi(1,[dead]]{_X_ONLY},{_X_ONLY})))",
-            _TR_LEAF_FAULT,
+            TR_LEAF_FAULT,
         ),
         (
             f"tr({_X_ONLY},and_v(v:pk({_X_ONLY}),multi(1,{_X_ONLY},{_X_ONLY})))",
-            _TR_LEAF_FAULT,
+            TR_LEAF_FAULT,
         ),
         (
             f"tr({_X_ONLY},{{pk({_X_ONLY}),and_v(v:pk({_X_ONLY}),multi(1,nope))}})",
-            _TR_LEAF_FAULT,
+            TR_LEAF_FAULT,
         ),
         (
             f"wsh(and_v(v:pk({_KEY}),multi_a(1,[dead]]{_KEY},{_KEY})))",
-            _P2WSH_FAULT,
+            P2WSH_FAULT,
         ),
         (
             f"sh(wsh(and_v(v:pk({_KEY}),multi_a(1,[dead]]{_KEY},{_KEY}))))",
-            _P2WSH_FAULT,
+            P2WSH_FAULT,
         ),
-        (f"wsh(and_v(v:pk({_KEY}),multi_a(1,{_KEY},{_KEY})))", _P2WSH_FAULT),
+        (f"wsh(and_v(v:pk({_KEY}),multi_a(1,{_KEY},{_KEY})))", P2WSH_FAULT),
     ],
 )
 def test_a_multisig_outside_its_context_reads_no_key(
@@ -91,10 +90,9 @@ def test_a_bracket_in_a_multisig_key_is_the_key_fault(
 def test_no_key_past_a_bad_threshold_or_an_empty_key_is_read(descriptor: str) -> None:
     """Core stops before the bracketed key, so no key fault is named.
 
-    Core then names its fallback for the leaf, where parse names the
-    brackets.
+    Core then names its fallback for the leaf, and so does parse.
     """
-    with pytest.raises(BTClibValueError, match="^unbalanced brackets$"):
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
         parse(descriptor)
 
 
