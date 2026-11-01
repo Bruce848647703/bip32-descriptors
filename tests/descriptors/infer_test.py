@@ -795,27 +795,30 @@ def test_twins_beside_a_raw_form_stay_rawnodes() -> None:
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
-def test_a_leaf_nested_too_deep_is_a_rawleaf() -> None:
-    """`_inferred_node` follows the script, which the stack cannot follow far.
+def test_a_leaf_nested_deep_is_its_miniscript() -> None:
+    """A leaf nested past the interpreter's recursion limit is read whole.
 
-    The script is a miniscript of `n:` wrappers, one more with each byte.
+    The script is a miniscript of ``n:`` wrappers, one more with each byte.
+    Core reads it as that miniscript: a tapscript has no ops limit, and an
+    ``n:`` adds nothing to the stack.
     """
-    leaf = bytes.fromhex(PK_K1) + b"\x92" * (3 * sys.getrecursionlimit())
-    raw = f"rawleaf({leaf.hex()},c0)"
+    depth = 3 * sys.getrecursionlimit()
+    leaf = bytes.fromhex(PK_K1) + b"\x92" * depth
+    text = f"{'n' * depth}:pk({X1})"
     hashed = leaf_hash(0xC0, leaf)
     # alone, beside a node no proof went through, and beside a proven leaf
     script, inferred = _inferred_from_paths(hashed, {leaf: b""})
-    assert inferred == add_checksum(f"tr({X1},{raw})")
+    assert inferred == add_checksum(f"tr({X1},{text})")
     assert parse(inferred, "regtest").script_pub_key().script == script
     other = b"\x11" * 32
     root = _branch(hashed, other)
     script, inferred = _inferred_from_paths(root, {leaf: other})
-    assert inferred == add_checksum(f"tr({X1},{{{raw},rawnode({other.hex()})}})")
+    assert inferred == add_checksum(f"tr({X1},{{{text},rawnode({other.hex()})}})")
     assert parse(inferred, "regtest").script_pub_key().script == script
     root = _branch(hashed, LEAF_51)
     paths = {leaf: LEAF_51, b"\x51": hashed}
     script, inferred = _inferred_from_paths(root, paths)
-    assert raw in inferred
+    assert inferred == add_checksum(f"tr({X1},{{{text},rawleaf(51,c0)}})")
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
@@ -843,14 +846,23 @@ def test_a_script_is_read_with_the_keys_it_pushes_the_hash_of(
     assert given == [1]
 
 
-def test_a_witness_script_nested_too_deep_is_an_addr() -> None:
-    """The same recursion, reached through a ``wsh()``."""
-    witness_script = b"\x51" + b"\x92" * (3 * sys.getrecursionlimit())
-    script = b"\x00\x20" + sha256(witness_script).digest()
-    provider = Provider(scripts=(witness_script,))
-    inferred = infer_descriptor(script, provider, "regtest")
-    address = ScriptPubKey(script, "regtest").address
-    assert inferred == add_checksum(f"addr({address})")
+def test_a_witness_script_nested_past_the_ops_limit_is_an_addr() -> None:
+    """A ``wsh()`` of ``n:`` wrappers, at Core's ops limit and past it.
+
+    Each ``n:`` is one op, and ``pk()`` is one more.
+    """
+    for depth, sane in (
+        (200, True),
+        (201, False),
+        (3 * sys.getrecursionlimit(), False),
+    ):
+        witness_script = b"\x21" + bytes.fromhex(K1) + b"\xac" + b"\x92" * depth
+        script = b"\x00\x20" + sha256(witness_script).digest()
+        provider = Provider(scripts=(witness_script,))
+        inferred = infer_descriptor(script, provider, "regtest")
+        address = ScriptPubKey(script, "regtest").address
+        expected = f"wsh({'n' * depth}:pk({K1}))" if sane else f"addr({address})"
+        assert inferred == add_checksum(expected)
 
 
 def test_a_tree_inferred_from_its_descriptor_is_that_descriptor() -> None:

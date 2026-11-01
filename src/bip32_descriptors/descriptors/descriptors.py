@@ -205,6 +205,7 @@ from bip32_descriptors.descriptors.miniscript import (
     _has_raw_key_hash,
     _read_unclosed_multisig_keys,
     _script_number,
+    _tree_eval,
 )
 from bip32_descriptors.descriptors.miniscript import (
     from_script as _miniscript_from_script,
@@ -3427,41 +3428,40 @@ def _inferred_node(node: Miniscript, known: _Known) -> Miniscript | None:
     """Return the miniscript with its keys behind their origins.
 
     Core's `KeyParser::FromPKBytes` and `FromPKHBytes`. A tapscript
-    ``pkh()`` holds the key Core filed under the hash, written whole.
+    ``pkh()`` holds the key Core filed under the hash, written whole. The
+    tree is walked by `_tree_eval`, which says why it does not recurse.
     """
     tapscript = node.context == miniscript.TAPSCRIPT
-    keys: list[KeyExpression] = []
-    for key in node.keys:
-        sec = cast("bytes", key.pub_key)
-        inferred: KeyExpression | None
-        if tapscript and node.fragment == "pk_h":
-            whole = known.by_x_only_hash[hash160(sec[1:])]
-            inferred = _inferred_key(whole, _P2TR, known)
-        elif tapscript:
-            inferred = _inferred_x_only(sec[1:], known)
-        else:
-            inferred = _inferred_key(sec, _P2WSH, known)
-        if inferred is None:
+
+    def up(
+        _: None, sub: Miniscript, subs: list[Miniscript | None]
+    ) -> Miniscript | None:
+        inferred_subs = [inferred for inferred in subs if inferred is not None]
+        if len(inferred_subs) != len(subs):
             return None
-        keys.append(inferred)
-    subs: list[Miniscript] = []
-    for sub in node.subs:
-        inferred_sub = _inferred_node(sub, known)
-        if inferred_sub is None:
-            return None
-        subs.append(inferred_sub)
-    return replace(node, subs=tuple(subs), keys=tuple(keys))
+        keys: list[KeyExpression] = []
+        for key in sub.keys:
+            sec = cast("bytes", key.pub_key)
+            inferred: KeyExpression | None
+            if tapscript and sub.fragment == "pk_h":
+                whole = known.by_x_only_hash[hash160(sec[1:])]
+                inferred = _inferred_key(whole, _P2TR, known)
+            elif tapscript:
+                inferred = _inferred_x_only(sec[1:], known)
+            else:
+                inferred = _inferred_key(sec, _P2WSH, known)
+            if inferred is None:
+                return None
+            keys.append(inferred)
+        return replace(sub, subs=tuple(inferred_subs), keys=tuple(keys))
+
+    return _tree_eval(node, None, lambda *_: None, up)
 
 
 def _inferred_miniscript(
     script: bytes, context: str, known: _Known
 ) -> Miniscript | None:
-    """Return the sane miniscript a script is, None where it is none.
-
-    None too where the script nests too deep for `_inferred_node`, whose
-    recursion follows the script: how deep that is depends on the
-    interpreter's stack, but it fails here and not in the caller.
-    """
+    """Return the sane miniscript a script is, None where it is none."""
     tapscript = context == _P2TR
     held = known.by_x_only_hash if tapscript else known.by_hash
     # only what the script pushes: this runs once per leaf, whatever the
@@ -3476,7 +3476,7 @@ def _inferred_miniscript(
             script, _MINISCRIPT_CONTEXTS[context], key_hashes
         )
         node = _inferred_node(read, known)
-    except (BTClibValueError, RecursionError):
+    except BTClibValueError:
         return None
     return node if node is not None and node.is_sane() else None
 
@@ -3829,13 +3829,13 @@ def infer_descriptor(
 
     A p2tr output whose internal key and merkle root the provider knows is
     a ``tr()`` of the tree it can rebuild, whatever is missing from it: a
-    leaf that infers to nothing else, that has another leaf version, that
-    nests too deep for the interpreter's stack, or that infers to what
-    `parse` refuses, is a ``rawleaf()``, and a leaf with no script, or a
-    subtree none of whose leaves is proven, is a ``rawnode()``. So is the
-    whole tree where the records contradict each other, which only a hash
-    collision does. So a ``tr()`` answered here parses, to the same script,
-    where `parse` reads the origin the provider gives its internal key.
+    leaf that infers to nothing else, that has another leaf version, or
+    that infers to what `parse` refuses, is a ``rawleaf()``, and a leaf
+    with no script, or a subtree none of whose leaves is proven, is a
+    ``rawnode()``. So is the whole tree where the records contradict each
+    other, which only a hash collision does. So a ``tr()`` answered here
+    parses, to the same script, where `parse` reads the origin the provider
+    gives its internal key.
 
     Two equal subtrees share their control blocks, so one is rebuilt. The
     other is written out in a tree Core rebuilds with no raw form in it,
