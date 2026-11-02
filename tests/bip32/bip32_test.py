@@ -143,10 +143,12 @@ def test_the_three_key_reads_answer_for_one_half_each() -> None:
         pub_keyinfo_from_xpub(xpub, "testnet")
 
     # and each public read refuses the private half by its prefix
-    with pytest.raises(BTClibValueError, match="not a public key: prefix 0x00"):
-        pub_keyinfo_from_xpub(xprv)
-    with pytest.raises(BTClibValueError, match="not a public key: prefix 0x00"):
-        point_from_xpub(xprv)
+    # compared whole: a search would still find this text in a message
+    # quoting the scalar's first byte after the prefix
+    for read in (pub_keyinfo_from_xpub, point_from_xpub):
+        with pytest.raises(BTClibValueError) as excinfo:
+            read(xprv)
+        assert str(excinfo.value) == "not a public key: prefix 0x00"
     # and the private read refuses the public half by its prefix
     with pytest.raises(BTClibValueError, match="not a private key: prefix 0x0[23]"):
         prv_keyinfo_from_xprv(xpub)
@@ -734,6 +736,9 @@ def test_derive_from_account() -> None:
     err_msg = "invalid branch number: 2"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account(mxpub, 2, 0)
+    # derive_from_account_ carries a default of its own
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_(mxpub, 2, 0)
 
     err_msg = "invalid private derivation at address index level"
     with pytest.raises(BTClibValueError, match=err_msg):
@@ -789,6 +794,15 @@ def test_crack() -> None:
     child_xpub = xpub_from_xprv(child_xprv)
     with pytest.raises(BTClibValueError, match="not a parent's child: wrong depths"):
         crack_prv_key_var(child_xpub, child_xprv)
+
+    # one level too deep with the parent's own fingerprint: `!=` weakened to
+    # `<` would let the depth through and crack it
+    too_deep = replace(
+        BIP32KeyData.b58decode(child_xprv),
+        depth=BIP32KeyData.b58decode(parent_xpub).depth + 2,
+    )
+    with pytest.raises(BTClibValueError, match="^not a parent's child: wrong depths$"):
+        crack_prv_key_var(parent_xpub, too_deep)
 
     child0_xprv = derive(parent_xprv, 0)
     grandchild_xprv = derive(child0_xprv, 0)
@@ -1149,11 +1163,14 @@ def test_invalid_child_prv_key(bindings: bool, monkeypatch: pytest.MonkeyPatch) 
     xkey = BIP32KeyData.b58decode(rootxprv)
     prv_key_int = int.from_bytes(xkey.key[1:], byteorder="big", signed=False)
 
-    # parse256(IL) >= n: no valid scalar to offset the parent key by
-    err_msg = "invalid child index 0: the hmac left half is not a valid scalar"
-    _force_hmac(monkeypatch, ec.n, xkey.chain_code)
-    with pytest.raises(BTClibValueError, match=err_msg):
-        derive(rootxprv, "m/0")
+    # parse256(IL) >= n: no valid scalar to offset the parent key by. Above
+    # n as well as at it: with `>=` weakened to `==`, the Python arm derives
+    # a key from n + 5
+    err_msg = "^invalid child index 0: the hmac left half is not a valid scalar"
+    for il in (ec.n, ec.n + 5):
+        _force_hmac(monkeypatch, il, xkey.chain_code)
+        with pytest.raises(BTClibValueError, match=err_msg):
+            derive(rootxprv, "m/0")
 
     # ki = 0: the one offset that cancels the parent key out
     err_msg = "invalid child index 0: the child private key is zero"
@@ -1184,10 +1201,11 @@ def test_invalid_child_pub_key(bindings: bool, monkeypatch: pytest.MonkeyPatch) 
     xkey = BIP32KeyData.b58decode(rootxprv)
     prv_key_int = int.from_bytes(xkey.key[1:], byteorder="big", signed=False)
 
-    err_msg = "invalid child index 0: the hmac left half is not a valid scalar"
-    _force_hmac(monkeypatch, ec.n, xkey.chain_code)
-    with pytest.raises(BTClibValueError, match=err_msg):
-        derive(rootxpub, "m/0")
+    err_msg = "^invalid child index 0: the hmac left half is not a valid scalar"
+    for il in (ec.n, ec.n + 5):
+        _force_hmac(monkeypatch, il, xkey.chain_code)
+        with pytest.raises(BTClibValueError, match=err_msg):
+            derive(rootxpub, "m/0")
 
     # offset * G is the parent point negated, so their sum is infinity
     err_msg = "invalid child index 0: the child public key is the point at infinity"
@@ -1445,6 +1463,31 @@ def test_assert_valid_key_refuses_a_scalar_above_n_too() -> None:
         xkey_data.assert_valid()
 
 
+def test_assert_valid_key_accepts_the_scalar_one() -> None:
+    """The scalar 1 is valid: `0 < q` moved to `1 < q` refuses it."""
+    root = BIP32KeyData.b58decode(XKEY)
+    one = replace(root, key=b"\x00" + (1).to_bytes(32, byteorder="big", signed=False))
+    one.assert_valid()
+
+
+@pytest.mark.parametrize(
+    "field", ["version", "parent_fingerprint", "chain_code", "key"]
+)
+def test_assert_valid_refuses_each_field_one_byte_too_long(field: str) -> None:
+    """Each fixed-size field is refused one byte too long, not only one short.
+
+    The extra byte is a leading zero, so an overlong key keeps its 0x00
+    prefix and its scalar, and only the length check refuses it.
+    """
+    xkey_data = BIP32KeyData.b58decode(XKEY)
+    value = getattr(xkey_data, field)
+    long_data = replace_unchecked(xkey_data, **{field: b"\x00" + value})
+    err_msg = f"invalid {field} length: {len(value) + 1} bytes instead of {len(value)}"
+    with pytest.raises(BTClibValueError) as excinfo:
+        long_data.assert_valid()
+    assert str(excinfo.value) == err_msg
+
+
 def test_invalid_key_prefix_messages_show_exactly_one_byte() -> None:
     """The hex in each prefix-refusal message is one byte, not a slice past it.
 
@@ -1665,10 +1708,14 @@ def test_the_tweaks_of_a_public_derivation_are_the_derivation(
     assert bytes_from_point(point, ec) == derived.key
 
     # a hardened index needs the private key, and the refusal comes before
-    # any step of the path is walked
-    err_msg = "invalid hardened derivation from public key"
-    with pytest.raises(BTClibValueError, match=err_msg):
-        pub_key_derivation_tweaks(xpub.key, xpub.chain_code, "m/1h")
+    # any step of the path is walked. m/0h is the offset itself, which
+    # `>=` weakened to `>` would take for an unhardened index
+    err_msg = "^invalid hardened derivation from public key$"
+    for der_path in ("m/0h", "m/1h"):
+        with pytest.raises(BTClibValueError, match=err_msg):
+            pub_key_derivation_tweaks(xpub.key, xpub.chain_code, der_path)
+        with pytest.raises(BTClibValueError, match=err_msg):
+            derive(xpub_from_xprv(rootxprv), der_path)
 
 
 # BIP328's own test vectors: a MuSig2 aggregate public key, the synthetic
@@ -1927,6 +1974,8 @@ def test_pub_key_derivation_tweaks_does_not_quote_a_private_key() -> None:
     prv = b"\x00" + bytes(range(1, 33))
     with pytest.raises(BTClibValueError, match="^invalid public key: ") as e:
         pub_key_derivation_tweaks(prv, b"\x01" * 32, [0])
+    # compared whole: "prefix 0x0001" would still match the search above
+    assert str(e.value) == "invalid public key: not a point, prefix 0x00"
     text = chained_text(e.value)
     assert prv[1:].hex() not in text
     assert prv[1:5].hex() not in text
