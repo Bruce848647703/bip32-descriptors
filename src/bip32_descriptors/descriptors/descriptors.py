@@ -3246,6 +3246,8 @@ _OP_CHECKMULTISIG = 0xAE
 _OP_NUMEQUAL = 0x9C
 _X_ONLY_SIZE = 32
 _CONTROL_BASE_SIZE = 33
+# the most leaves an inferred tree holds once its twins are written out
+_MAX_INFERRED_LEAVES = 1024
 
 
 def _ops(script: bytes) -> list[tuple[int, bytes, int]]:
@@ -3641,6 +3643,17 @@ def _with_twins(tree: DescriptorTree) -> DescriptorTree:
     return left, left if isinstance(tree[1], RawNode) else _with_twins(tree[1])
 
 
+def _written_leaves(tree: DescriptorTree) -> int:
+    """Return the number of leaves of a whole tree with its twins written out.
+
+    One step per node rebuilt, as `_with_twins` takes.
+    """
+    if not isinstance(tree, tuple):
+        return 1
+    left = _written_leaves(tree[0])
+    return left + (left if isinstance(tree[1], RawNode) else _written_leaves(tree[1]))
+
+
 def _taproot_tree(
     merkle_root: bytes,
     leaf_scripts: Mapping[bytes, tuple[bytes, int]],
@@ -3669,7 +3682,9 @@ def _taproot_tree(
                 proven.append(((script, leaf_version), control, hashed))
     root = _rebuilt(merkle_root, proven) or _TreeNode(merkle_root)
     tree, _, whole = _inferred_subtree(root, known)
-    return _with_twins(tree) if whole else tree
+    if whole and _written_leaves(tree) <= _MAX_INFERRED_LEAVES:
+        return _with_twins(tree)
+    return tree
 
 
 def _rebuilt(
@@ -3771,11 +3786,23 @@ def _inferred(  # noqa: C901, PLR0911, PLR0912
         node = _inferred_miniscript(script, _P2WSH, known)
         if node is not None:
             return MiniscriptDescriptor(node, network=network)
-    if context != _TOP:
-        return None
+    return _addr_or_raw(script, kind, network) if context == _TOP else None
+
+
+def _addr_or_raw(script: bytes, kind: str, network: str) -> Descriptor:
+    """Return the ``addr()`` of an output of a kind with one, else ``raw()``."""
     if kind.startswith(("witness", "pubkeyhash", "scripthash")):
         return AddrDescriptor(ScriptPubKey(script, network).address, network=network)
     return RawDescriptor(script, network=network)
+
+
+def _parses_to(text: str, script: bytes, network: str) -> bool:
+    """Return True where `parse` reads a descriptor text as the script."""
+    try:
+        parsed = parse(text, network)
+    except (BTClibValueError, EccValueError):
+        return False
+    return parsed.script_pub_key().script == script
 
 
 def _assert_provider(provider: Provider) -> None:
@@ -3817,7 +3844,7 @@ def infer_descriptor(
 
     What `scantxoutset` answers in each `unspents[].desc`, at
     bitcoin/bitcoin@f0de87f040 (the v32.1 tag), read from the script and
-    from what `provider` knows, except for the p2tr trees below. Each key
+    from what `provider` knows, except where this says otherwise. Each key
     is the public key the script holds, behind its origin where the
     provider knows one. A sorted multisig is a ``multi()`` of its keys in
     the script's order. A key in a ``tr()`` is x-only, except in a
@@ -3827,33 +3854,43 @@ def infer_descriptor(
     ``raw()`` otherwise. An empty script is a ``raw()`` that `parse` refuses,
     as Core's parser does.
 
+    Where `parse` does not read the descriptor inferred here back to the
+    same script, the answer is the ``addr()`` of the output, or its
+    ``raw()`` where it has no address.
+
     A p2tr output whose internal key and merkle root the provider knows is
     a ``tr()`` of the tree it can rebuild, whatever is missing from it: a
     leaf that infers to nothing else, that has another leaf version, or
     that infers to what `parse` refuses, is a ``rawleaf()``, and a leaf
     with no script, or a subtree none of whose leaves is proven, is a
     ``rawnode()``. So is the whole tree where the records contradict each
-    other, which only a hash collision does. So a ``tr()`` answered here
-    parses, to the same script, where `parse` reads the origin the provider
-    gives its internal key.
+    other, which only a hash collision does.
 
     Two equal subtrees share their control blocks, so one is rebuilt. The
     other is written out in a tree Core rebuilds with no raw form in it,
-    and is a ``rawnode()`` of its hash in any other tree.
+    where the tree then holds at most 1024 leaves, and is a ``rawnode()``
+    of its hash in any other tree. Core writes it out whatever the number
+    of leaves, which a twin at every other level of the tree doubles with
+    each record.
 
-    At that tag, Core answers a ``rawtr()`` for a tree with a ``rawnode()``
-    in it, or with a ``rawleaf()`` that infers to nothing else or has
-    another leaf version. For a leaf `parse` refuses, such as a key that is
-    no point or a miniscript that is not satisfiable, it answers a ``tr()``
-    that holds the leaf, and that its own parser refuses. Core's PR 30243
-    infers the root of a tree it cannot rebuild as one ``rawnode()``, and
-    drops the leaf version of a leaf it infers as another descriptor.
+    At that tag, Core answers a descriptor its own parser refuses, such as
+    a ``pkh()`` of a key that is no point, a ``wsh()`` of a miniscript that
+    is not satisfiable, or a bare ``multi()`` of more than three keys. It
+    answers a ``rawtr()`` for a tree with a ``rawnode()`` in it, or with a
+    ``rawleaf()`` that infers to nothing else or has another leaf version.
+    For a leaf `parse` refuses, such as a key that is no point or a
+    miniscript that is not satisfiable, it answers a ``tr()`` that holds
+    the leaf, and that its own parser refuses. Core's PR 30243 infers the
+    root of a tree it cannot rebuild as one ``rawnode()``, and drops the
+    leaf version of a leaf it infers as another descriptor.
     """
     script = bytes_from_octets(script)
     _assert_provider(provider)
     network = validated_network_name(network)
-    inferred = _inferred(script, _TOP, _Known.of(provider), network)
-    return add_checksum(str(inferred))
+    inferred = str(_inferred(script, _TOP, _Known.of(provider), network))
+    if not _parses_to(inferred, script, network):
+        inferred = str(_addr_or_raw(script, _solved(script)[0], network))
+    return add_checksum(inferred)
 
 
 def multipath_descriptors(descriptor: str, network: str | None = None) -> list[str]:

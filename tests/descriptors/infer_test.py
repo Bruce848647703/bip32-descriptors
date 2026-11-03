@@ -8,12 +8,14 @@
 `scantxoutset` answers for the scripts its descriptor describes at index
 0, with the provider that descriptor's expansion fills. A script's are
 what `decodescript` answers, with an empty provider.
-`tests/integration/infer_test.py` asks the node again.
+`tests/integration/infer_test.py` asks the node again. `NOT_PARSED` holds
+the answers of the scripts whose Core answer `parse` refuses.
 
 The other tests are held to Core's source at bitcoin/bitcoin@f0de87f040
 (the v32.1 tag), `src/script/descriptor.cpp`, except those whose ``tr()``
-holds a ``rawleaf()`` or a ``rawnode()``, where `infer_descriptor` says
-what Core answers and what is answered here.
+holds a ``rawleaf()`` or a ``rawnode()``, and those where `parse` refuses
+what Core answers, where `infer_descriptor` says what Core answers and
+what is answered here.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from btclib.script.taproot import (
     output_pubkey_from_merkle_root_var,
     tree_helper,
 )
+from ecc.exceptions import EccValueError
 from ecc.hashes import tagged_hash
 
 from bip32_descriptors.bip32 import derive, xpub_from_xprv
@@ -366,6 +369,9 @@ def test_a_shape_infers_what_core_infers(shape: str) -> None:
         for script in descriptor.script_pub_keys(0)
     ]
     assert inferred == expected
+    scripts = [s for d in descriptors for s in d.script_pub_keys(0)]
+    for text, script in zip(inferred, scripts, strict=True):
+        assert parse(text, "regtest").script_pub_key() == script
 
 
 def test_a_range_infers_with_every_index_merged() -> None:
@@ -379,11 +385,28 @@ def test_a_range_infers_with_every_index_merged() -> None:
     assert alone != expected[1]
 
 
+# the raw() of a script whose Core answer `parse` refuses
+NOT_PARSED = {
+    name: add_checksum(f"raw({SCRIPTS[name][0]})")
+    for name in ("p2pk of no point", "multisig of 17 keys")
+}
+
+
 @pytest.mark.parametrize("name", SCRIPTS)
 def test_a_script_infers_what_core_infers(name: str) -> None:
     """A script read with an empty provider."""
     script, expected = SCRIPTS[name]
-    assert infer_descriptor(script, Provider(), "regtest") == expected
+    inferred = infer_descriptor(script, Provider(), "regtest")
+    assert inferred == NOT_PARSED.get(name, expected)
+    if script:
+        assert parse(inferred, "regtest").script_pub_key().script.hex() == script
+
+
+@pytest.mark.parametrize("name", NOT_PARSED)
+def test_parse_refuses_the_core_answer_of_each_not_parsed_script(name: str) -> None:
+    """A key that is no point, and a bare ``multi()`` of over three keys."""
+    with pytest.raises((BTClibValueError, EccValueError)):
+        parse(SCRIPTS[name][1], "regtest")
 
 
 def test_core_scantxoutset_vectors() -> None:
@@ -676,6 +699,52 @@ def test_a_leaf_parse_refuses_is_a_rawleaf_in_a_whole_tree(leaf: str) -> None:
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
+NO_POINT_KEY = bytes.fromhex("02" + NO_POINT)
+P2WPKH_OF_NO_POINT = b"\x00\x14" + hash160(NO_POINT_KEY)
+
+
+def _p2wsh(witness_script: str, name: str) -> pytest.ParameterSet:
+    inner = bytes.fromhex(witness_script)
+    script = ScriptPubKey.p2wsh(inner).script
+    return pytest.param(script, Provider(scripts=(inner,)), id=f"wsh({name})")
+
+
+@pytest.mark.parametrize(
+    "script, provider",
+    [
+        _p2wsh("00", "0"),
+        _p2wsh(f"21{K1}ad00", "and_v(v:pk(K1),0)"),
+        _p2wsh(f"2102{NO_POINT}ac", "pk(no point)"),
+        pytest.param(
+            b"\x76\xa9\x14" + hash160(NO_POINT_KEY) + b"\x88\xac",
+            Provider(keys={NO_POINT_KEY: None}),
+            id="pkh",
+        ),
+        pytest.param(
+            P2WPKH_OF_NO_POINT, Provider(keys={NO_POINT_KEY: None}), id="wpkh"
+        ),
+        pytest.param(
+            ScriptPubKey.p2sh(P2WPKH_OF_NO_POINT).script,
+            Provider(keys={NO_POINT_KEY: None}, scripts=(P2WPKH_OF_NO_POINT,)),
+            id="sh(wpkh)",
+        ),
+    ],
+)
+def test_what_parse_refuses_is_the_address_of_the_output(
+    script: bytes, provider: Provider
+) -> None:
+    """Where Core infers what its own parser refuses.
+
+    A ``wsh()`` of ``0``, of a miniscript that is not satisfiable, and of
+    a key that is no point; a ``pkh()``, a ``wpkh()`` and a ``sh(wpkh())``
+    of a provider key that is no point.
+    """
+    inferred = infer_descriptor(script, provider, "regtest")
+    assert inferred == _addr(script)
+    assert inferred.startswith("addr(")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
 def test_a_leaf_parse_reads_stays_what_it_infers_to() -> None:
     """The control: a key that is a point keeps its ``pk()``."""
     leaf = bytes.fromhex(PK_K1)
@@ -792,6 +861,67 @@ def test_twins_beside_a_raw_form_stay_rawnodes() -> None:
     script, inferred = _inferred_from_paths(root, {b"\x51": path})
     text = f"{{{{rawleaf(51,c0),{nodes[0]}}},{nodes[1]}}}"
     assert inferred == add_checksum(f"tr({X1},{text})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def _older(n: int) -> bytes:
+    """Return the tapscript of ``and_v(v:pk(X1),older(n))``, for n from 17."""
+    return bytes.fromhex(f"20{X1}ad01{n:02x}b2")
+
+
+def _named_twins(levels: int) -> tuple[bytes, dict[bytes, bytes]]:
+    """Return the root of a tree that repeats a subtree, and its leaves' paths.
+
+    The tree of ``pk(X1)`` alone, then at each level ``{L,{T,T}}`` of the
+    tree ``T`` below and a leaf ``L`` whose proof names the pair: one record
+    more for twice the leaves once the twins are written out.
+    """
+    node = leaf_hash(0xC0, bytes.fromhex(PK_K1))
+    paths = {bytes.fromhex(PK_K1): b""}
+    for level in range(levels):
+        leaf = _older(17 + level)
+        hashed, pair = leaf_hash(0xC0, leaf), _branch(node, node)
+        paths = {script: path + node + hashed for script, path in paths.items()}
+        paths[leaf] = pair
+        node = _branch(hashed, pair)
+    return node, paths
+
+
+@pytest.mark.parametrize("leaves", [1024, 1025])
+def test_twins_are_written_out_up_to_1024_leaves(leaves: int) -> None:
+    """Past that, each twin stays the ``rawnode()`` of its hash.
+
+    Nine levels of `_named_twins` hold 1023 leaves written out, beside one
+    more leaf or a branch of two.
+    """
+    node, paths = _named_twins(9)
+    sides = [_older(0x70 + n) for n in range(leaves - 1023)]
+    hashes = [leaf_hash(0xC0, side) for side in sides]
+    side = hashes[0] if len(hashes) == 1 else _branch(*hashes)
+    paths = {script: path + side for script, path in paths.items()}
+    for side_script, other in zip(sides, reversed(hashes), strict=True):
+        paths[side_script] = (other if len(hashes) == 2 else b"") + node
+    script, inferred = _inferred_from_paths(_branch(node, side), paths)
+    if leaves == 1024:
+        assert inferred.count("pk(") == 1024
+        assert "rawnode(" not in inferred
+    else:
+        assert inferred.count("pk(") == len(paths)
+        assert inferred.count("rawnode(") == 9
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+@pytest.mark.parametrize("levels", [16, 64])
+def test_a_tree_repeating_a_subtree_infers_one_leaf_per_record(levels: int) -> None:
+    """Its size grows with its records, not with the twins.
+
+    At 64 levels the first leaf is 128 levels down, BIP341's limit.
+    """
+    root, paths = _named_twins(levels)
+    script, inferred = _inferred_from_paths(root, paths)
+    assert inferred.count("pk(") == len(paths) == levels + 1
+    assert inferred.count("rawnode(") == levels
+    assert len(inferred) < 200 * len(paths)
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
