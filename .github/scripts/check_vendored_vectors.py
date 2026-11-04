@@ -21,11 +21,11 @@ This is bip39-slip39's copy, carried through base58-bech32 with the tree
 this one was opened from and parsing this tree's tests/_data/README.md, a
 ledger of that same shape; its code departs from bip39-slip39's in
 nothing, and its docstring only in what it says of the ledgers. btclib,
-btclib-ecc, btclib-wallet and base58-bech32 carry copies under this same
+ecc, btclib-wallet and base58-bech32 carry copies under this same
 name, over ledgers of the same shape;
 btclib-secp256k1 another, over its own tests/README.md, whose entries are
 each pinned to a commit under a heading owning one fenced block; and
-bitcoin-node-tests another, over its TF2.md. What the copies share is
+functional-tests another, over its TF2.md. What the copies share is
 owed to the others in the same campaign: the parsing, the `gh` calls, a
 field's spelling, the arguments this takes. What answers to one ledger's
 own shape is not, and the collapsing of identical skip lines below is
