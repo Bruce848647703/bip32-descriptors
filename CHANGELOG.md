@@ -19,6 +19,37 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.4
+
+### infer_descriptor answers what parse reads back
+
+Where `parse` does not read what `infer_descriptor` infers back to the
+script, `infer_descriptor` answers the `addr()` of the output, or its
+`raw()` where the output has no address (closes #44).
+
+### A tree's twins are written out up to 1024 leaves
+
+`infer_descriptor` writes out a repeated subtree of a `tr()` only where
+the tree then holds at most 1024 leaves, and past that answers each twin
+as the `rawnode()` of its hash (closes #45).
+
+### bip32.py's refusal messages are tested whole
+
+Tests only: refusal messages are compared whole, and boundaries no test
+reached are tested (closes #33) (closes #32) (closes #34) (closes #35).
+
+### CI
+
+`os-macos.yml` and `pypi-install.yml` run macOS on arm64 alone (issue
+btclib-org/.github#1982). The actions group's pins move, `release.yml`'s
+among them (#1), and so do the pre-commit hook revisions (#65).
+
+### The prose
+
+The shared part of `CONTRIBUTING.md` follows btclib-org/.github (#58),
+and `RELEASING.md` names the lint jobs a release run skips (issue
+btclib-org/.github#1989).
+
 ## v2026.11.2
 
 ### rawnode, rawleaf, rawpkh and nested raw, and a tr() inference

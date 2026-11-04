@@ -9,6 +9,25 @@ number says when a release was cut, and promises nothing about
 compatibility, so a breaking change is announced in this file — read it
 before upgrading, rather than a digit.
 
+## v2026.11.4
+
+Where `parse` does not read what `infer_descriptor` infers back to the
+same script, `infer_descriptor` answers the `addr()` of the output, or
+its `raw()` where the output has no address, such as a bare `multi()` or
+a `pk()`. v2026.11.2 answered a descriptor that `parse` refuses: for
+example, one holding a key that is no point, a `wsh()` of a miniscript
+that cannot be satisfied, or a bare `multi()` of more than three keys.
+Code that compares the answer with Core's `decodescript` or
+`scantxoutset` has to expect these.
+
+For a p2tr output, `infer_descriptor` writes out a repeated subtree only
+where the tree then holds at most 1024 leaves. Past that, each repeat is
+the `rawnode()` of its hash, where v2026.11.2 wrote every one out. Code
+that expects the repeats written out meets `rawnode()` instead.
+
+No workflow tests this release on x86_64 macOS: `os-macos.yml` and
+`pypi-install.yml` run macOS on arm64 alone.
+
 ## v2026.11.2
 
 `parse` reads `rawnode()`, `rawleaf()` and `rawpkh()`, and `raw()` inside
