@@ -121,6 +121,27 @@ def test_checksum(descriptor: str, expected_checksum: str) -> None:
     assert checksum(descriptor) == expected_checksum
 
 
+# what BIP380's descsum_create, at bitcoin/bips@a0c977f3, answers for
+# strings whose last one or two characters are of group 1 or 2, the
+# groups being INPUT_CHARSET's 32-character thirds. Every descriptor ends
+# in ")", of group 0, so only a direct call reaches these tails
+@pytest.mark.parametrize(
+    "text, expected_checksum",
+    [
+        ("I", "cm8zvemf"),
+        ("A", "3fknfsgu"),
+        ("II", "e0j6tmen"),
+        ("IA", "96ah67j5"),
+        ("AI", "9c70z6m6"),
+        ("AA", "fceyyj2c"),
+        ("Ai", "t6e8l3dk"),
+    ],
+)
+def test_checksum_of_a_tail_of_group_1_or_2(text: str, expected_checksum: str) -> None:
+    """Reproduce BIP380's checksum where the tail is not of group 0."""
+    assert checksum(text) == expected_checksum
+
+
 def test_invalid_charset() -> None:
     """Refuse a character outside the BIP380 checksum charset."""
     with pytest.raises(BTClibValueError):

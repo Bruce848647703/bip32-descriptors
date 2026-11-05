@@ -268,6 +268,14 @@ SCRIPTS = {
         "a914111111111111111111111111111111111111111187",
         "addr(2MtoTvMi65NXBt3sTCXNd1aqKGa7gXsX8CC)#earyk9xv",
     ),
+    "p2sh ending in OP_EQUALVERIFY": (
+        "a914" + "11" * 20 + "88",
+        "raw(a914" + "11" * 20 + "88)#vtr7xg4l",
+    ),
+    "witness v0 of 21 bytes": (
+        "0015" + "11" * 21,
+        "raw(0015" + "11" * 21 + ")#ywffnzql",
+    ),
     "p2wpkh": (
         "00141111111111111111111111111111111111111111",
         "addr(bcrt1qzyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3lgth6c)#r4xeeasu",
