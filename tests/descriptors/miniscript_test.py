@@ -1306,6 +1306,53 @@ def test_what_the_context_does_not_carry_cannot_be_satisfied() -> None:
         timelocked.satisfy({KEY: signature}, SpendContext(sequence=36 | (1 << 31)))
 
 
+def test_two_unsigned_choices_make_a_signed_satisfaction_malleable() -> None:
+    """Refuse a satisfaction a third party can rewrite beside the signature.
+
+    Each ``l:`` of ``ll:0`` is an ``or_i()`` with a dissatisfaction
+    through either branch, and neither carries a signature: BIP379's
+    algorithm returns DONTUSE for it, and so for the ``or_b()``
+    satisfaction built on it, whose other half is signed. Bitcoin Core
+    v32.1.0's `getdescriptorinfo` refuses the expression in a ``wsh()``
+    as not sane, malleable witnesses exist.
+    """
+    signature = "30" * 71 + "01"
+    node = parse(f"or_b(ll:0,sc:pk_k({KEYS[0]}))")
+    with pytest.raises(BTClibValueError, match="no non-malleable satisfaction"):
+        node.satisfy({KEYS[0]: signature})
+
+
+def test_a_spend_without_a_context_opens_no_older_branch() -> None:
+    """Refuse ``older(1)`` where the caller gives no sequence.
+
+    A `SpendContext` left at its defaults carries sequence 0, which opens
+    no ``older()``, and sequence 1 opens ``older(1)``. Bitcoin Core
+    v32.1.0's `descriptorprocesspsbt` leaves the same input incomplete at
+    sequence 0 and finalizes it at sequence 1.
+    """
+    signature = "30" * 71 + "01"
+    node = parse(f"and_v(v:pk({KEYS[0]}),older(1))")
+    with pytest.raises(BTClibValueError, match="no satisfaction"):
+        node.satisfy({KEYS[0]: signature})
+    assert node.satisfy({KEYS[0]: signature}, SpendContext(sequence=1)) == [
+        bytes.fromhex(signature)
+    ]
+
+
+def test_a_thresh_is_dissatisfied_by_every_branch_dissatisfied() -> None:
+    """Satisfy an ``or_d()`` by its second branch, with the ``thresh()`` shut.
+
+    BIP379's one canonical dissatisfaction of a ``thresh()`` dissatisfies
+    every branch, which is two empty pushes here. Bitcoin Core v32.1.0's
+    `descriptorprocesspsbt`, given the third key's private key alone,
+    finalizes the same witness before the script: the signature, then two
+    empty pushes.
+    """
+    signature = "30" * 71 + "01"
+    node = parse(f"or_d(thresh(1,pk({KEYS[0]}),s:pk({KEYS[1]})),pk({KEYS[2]}))")
+    assert node.satisfy({KEYS[2]: signature}) == [bytes.fromhex(signature), b"", b""]
+
+
 def test_a_tapscript_multi_a_is_satisfied_with_one_element_per_key() -> None:
     """Satisfy a multi_a(), which counts every key rather than popping some.
 
