@@ -206,9 +206,8 @@ class KeyExpression:
     # are different strings with different checksums, so a descriptor
     # handed back in the other one is not the descriptor that was read.
     # One symbol for the whole expression, origin included, which is
-    # Bitcoin Core's single `m_apostrophe` per key: a path spelled both
-    # ways -- BIP380's own valid `[deadbeef/0'/0h/0']` -- is read and
-    # written back in the symbol its last hardened step used
+    # Bitcoin Core's single `m_apostrophe` per key; `_parse_key` says
+    # which one is kept
     hardening: str = _HARDENING
     # checked by `parse` against the network; not compared
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
@@ -546,8 +545,8 @@ def _hardening(path: str) -> str:
     Empty where the path hardens nothing, so that a caller choosing
     between two paths can tell "no opinion" from "an apostrophe". The
     last and not the first, which is Bitcoin Core's rule by construction:
-    its parser assigns the bool per hardened element, so the one it ends
-    on is the one that is written back.
+    its ``ParseKeyPath`` assigns the bool per hardened element, so a path
+    leaves it at its last one.
     """
     if not path:
         return ""
@@ -1149,10 +1148,13 @@ def _parse_key(
     an xprv as often as it is a public key, and an error message ends up
     in logs and in bug reports.
 
-    The hardening symbol is the last one the expression used, read in the
-    order it is written: the origin's path, then the key's, then the
-    wildcard. A fixed key hardens nothing and keeps the default, there
-    being no step of it to write.
+    The hardening symbol is one for the whole expression, Bitcoin Core's
+    single ``m_apostrophe``. Core reads the wildcard (``ParseDeriveType``)
+    before the key path (``ParseKeyPath``), so the marker is that of the
+    path's last hardened step; the wildcard's where the path hardens
+    nothing; the origin's where the wildcard does not either; and the
+    default where the origin does not either. A fixed key has no path and
+    no wildcard, so it takes the origin's marker, or the default.
 
     A ``musig()`` is read before the key origin and not after it, which is
     Bitcoin Core's order and where BIP390's "cannot be nested" comes from:
@@ -1203,9 +1205,10 @@ def _read_key(
         )
         # refused by `_der_path` before `_hardening` reads the same path
         indexes = tuple(_der_path(steps))
-        hardening = origin_hardening
-        for symbol in (_hardening("/".join(steps)), wildcard_hardening):
-            hardening = symbol or hardening
+        # the order is `_parse_key`'s, whose docstring says why
+        hardening = (
+            _hardening("/".join(steps)) or wildcard_hardening or origin_hardening
+        )
         return KeyExpression(
             origin=origin,
             xkey=_neutered(key, prv_keys),

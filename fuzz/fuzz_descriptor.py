@@ -42,13 +42,14 @@ walks the dataclasses' compared fields, not their printers. An x-only
 key's SEC parity is ignored, because its printed form keeps only x.
 The walk is iterative so a deep miniscript needs no recursive equality.
 
-The normal form can differ from the text. Among other things it
-writes public keys for private ones, hex in lowercase, numbers without
-leading zeros, no checksum, the sugared fragment names (`pk(K)` for
-`c:pk_k(K)`) and every hardened step in the symbol of the key's last
-hardened step. The assertions below read the printed text again: a second
-`parse` that refuses it, recovers another tree, or prints it differently is
-a defect in the printer or the parser and propagates to atheris as a finding.
+The normal form can differ from the text. Among other things it writes
+public keys for private ones, hex in lowercase, numbers without leading
+zeros, no checksum, the sugared fragment names (`pk(K)` for `c:pk_k(K)`)
+and every hardened step of a key in the one symbol `_parse_key` in
+`key_expression.py` chooses for it. The assertions below read the
+printed text again: a second `parse` that refuses it, recovers another
+tree, or prints it differently is a defect in the printer or the parser
+and propagates to atheris as a finding.
 
 **Every embedded miniscript whose keys derive at index 0 also makes a
 script round trip.** The private material read from the input is supplied
