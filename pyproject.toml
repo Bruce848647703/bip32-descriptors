@@ -89,7 +89,7 @@ classifiers = [
 secp256k1 = ["btclib[secp256k1]>=2026.10.24", "btclib-secp256k1>=0.8.0.10"]
 
 [project.urls]
-homepage = "https://bip32-descriptors.readthedocs.io/"
+homepage = "https://btclib.org/bip32-descriptors/"
 documentation = "https://bip32-descriptors.readthedocs.io/"
 download = "https://github.com/btclib-org/bip32-descriptors/releases"
 changelog = "https://github.com/btclib-org/bip32-descriptors/blob/main/RELEASE_NOTES.md"
