@@ -522,15 +522,15 @@ wheels = [
 
 [[package]]
 name = "btclib"
-version = "2026.10.30"
+version = "2026.11.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ecc" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/4c/9121120de8a4c7bc0682e63cab6d3a9658d4c9111f44b7dbae16f232c089/btclib-2026.10.30.tar.gz", hash = "sha256:c79668e82f543b87d302b6c93aa46009caf4b0d19ee7bd6fde429846da606a5b", size = 8264351, upload-time = "2026-10-30T03:28:46.338Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/ed/bb23ea5f8f01fa09f6454f5f763bfef3072c8bdf8fd29d9cf0f9576a6fcc/btclib-2026.11.2.tar.gz", hash = "sha256:aa9341cc14c2baf20e96ee638eaa72e88ff06cc11839fe92eaa735e3fc978ed7", size = 8318276, upload-time = "2026-11-02T04:48:13.486Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/45/c4b98b33c31d968d70f6036254028b8dba493e756591a43f68ddf1f93378/btclib-2026.10.30-py3-none-any.whl", hash = "sha256:4aeeacbc0218721e90a61c95daa5b17b91b0625deb819773fc405c11da9d0289", size = 455990, upload-time = "2026-10-30T03:28:44.647Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/35/87d6684ce6eb826ec8601508d5d359110a67d0a0abcf7e88de2ff9e32bf3/btclib-2026.11.2-py3-none-any.whl", hash = "sha256:957b2d75fe1826fff4f751256f6db8cbdfb0d8ff17f496f0ec7c8a79740d1700", size = 1464101, upload-time = "2026-11-02T04:48:11.346Z" },
 ]
 
 [package.optional-dependencies]
