@@ -430,6 +430,10 @@ uv run --locked --no-default-groups --group docs \
     sphinx-build -n -W -b html docs/source docs/build/html
 ```
 
+The documentation gate also runs the checks of the built pages that
+*Reproducing what CI runs* gives under `docs.yml`, `check_included_links.py`
+among them.
+
 `--cov` is in `addopts`, so the bare `pytest` above is the coverage gate
 and `fail_under` is what it answers against — 100%, and coverage takes
 that literally: a statement or a branch no test reaches fails it. A
@@ -462,8 +466,9 @@ that do not are deliberate:
 - The `dev-version` action re-locks after writing a rehearsal's version
   suffix; `uv lock` keeps the versions already locked.
 - `public-api`, in btclib-org/.github's `reusable-public-api.yml`, runs
-  `uvx griffe==2.2.0`: a pinned version, with its own dependencies
-  unlocked.
+  `uvx griffe==2.2.0`, then btclib-org/.github's `api_gaps.py` with
+  `uv run --no-project --with griffe==2.2.0`: a pinned version, with its
+  own dependencies unlocked.
 
 **Check exit codes, not filtered output.** `pre-commit run ... | grep -v
 Passed` hides a failure, and `grep` finding nothing exits 1, which is not
@@ -619,7 +624,7 @@ uv run --locked --only-group lint \
     pre-commit run --all-files --show-diff-on-failure
 ```
 
-`docs.yml`, the `docs` job — the build, and then a read of the pages it
+`docs.yml`, the `docs` job — the build, and then reads of the pages it
 wrote:
 
 ```shell
@@ -635,6 +640,26 @@ What myst renders for a destination it cannot resolve is an anchor to an
 id no page has. `-W` reports it because `docs/source/conf.py` resolves the
 links the included root files carry and suppresses no myst warning; the
 `grep` is what still finds one the day a suppression goes back in.
+
+Last, the job runs btclib-org/.github's `check_included_links.py`, at the
+commit `docs.yml` pins, over the same pages. It fails on a link to a file
+the docs render that is left at the repository's `/blob/main/` address
+rather than at the file's page here. Section 2 of the standard, *The
+documentation*, is the rule:
+
+```shell
+served=$(mktemp -d)
+git clone --quiet --filter=blob:none --sparse \
+    https://github.com/btclib-org/.github "$served"
+git -C "$served" sparse-checkout set .github/scripts
+git -C "$served" checkout --quiet \
+    "$(sed -n 's/.*reusable-docs\.yml@\([0-9a-f]*\).*/\1/p' .github/workflows/docs.yml)"
+found=0
+uv run --no-project --python 3.15 \
+    "$served"/.github/scripts/check_included_links.py docs/build/html || found=$?
+rm -rf "$served"
+test "$found" -eq 0
+```
 
 `codeql.yml` has no line here: its jobs run `github/codeql-action` and no
 command of this project's, so reproducing it locally means the CodeQL CLI

@@ -2,11 +2,13 @@
 name: api-break
 
 # The `api-break` label on a pull request that breaks the public API:
-# btclib-org/.github's `reusable-api-break.yml` walks the package with griffe
-# against the pull request's base commit (btclib-org/.github#1674). It is
-# advisory and gates nothing: before 1.0 a package breaks its surface
-# deliberately, and the label is for the reviewer to weigh. `release.yml`'s
-# `public-api` job asks the same question of a release.
+# btclib-org/.github's `reusable-api-break.yml` walks the package of the pull
+# request's merge commit against its first parent, with griffe and
+# `api_gaps.py`, the higher of their two exit codes deciding
+# (btclib-org/.github#1674). It is advisory and gates nothing: before 1.0 a
+# package breaks its surface deliberately, and the label is for the reviewer
+# to weigh. `release.yml`'s `public-api` job asks the same question of a
+# release.
 #
 # The trigger, its types and the concurrency group are here, as section 10 of
 # the organization's standard has them, with the job's `permissions:` and the
@@ -44,6 +46,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # the label; read-only on a fork
-    uses: btclib-org/.github/.github/workflows/reusable-api-break.yml@7b85b373d1957dcfc1a648a21dd7233954ef410b # v2026.11.2
+    uses: btclib-org/.github/.github/workflows/reusable-api-break.yml@5be4b0fbb5231cff001a3ee0eaa8f7d82bffef11 # v2026.11.5
     with:
       package: bip32_descriptors
