@@ -116,10 +116,14 @@ def _entry_points(tree: ast.Module) -> tuple[str, ...] | None:
 
 def _fuzz_target(tree: ast.Module) -> ast.FunctionDef | None:
     """Return the module-level `def fuzz_target(...)`, or None."""
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "fuzz_target":
-            return node
-    return None
+    return next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "fuzz_target"
+        ),
+        None,
+    )
 
 
 def _import_bindings(tree: ast.Module) -> dict[str, tuple[str, str]]:
@@ -189,10 +193,13 @@ def _round_trip(spec: str, obj: Any, data: bytes) -> bool | None:
     if attr == "b58decode":
         if not hasattr(obj, "b58encode"):
             return None
-        return bool(obj.b58encode() == data.decode("ascii"))
+        # obj is Any, so mypy reads each comparison as Any unless annotated
+        matches: bool = obj.b58encode() == data.decode("ascii")
+        return matches
     if not hasattr(obj, "serialize"):
         return None
-    return bool(obj.serialize() == data)
+    reserialized: bool = obj.serialize() == data
+    return reserialized
 
 
 def _seed_paths(name: str) -> tuple[Path, ...]:

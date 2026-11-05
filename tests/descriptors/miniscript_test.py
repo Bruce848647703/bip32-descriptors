@@ -251,7 +251,8 @@ def test_a_context_built_at_run_time_is_the_same_context() -> None:
     """
     context = b"tapscript".decode()
     assert context == TAPSCRIPT
-    assert context is not TAPSCRIPT
+    # the strings are equal, so only identity tells them apart
+    assert context is not TAPSCRIPT  # sourcery skip: compare-via-equals
     node = parse(f"pk({XONLY})", context)
     assert node.script() == bytes.fromhex(f"20{XONLY}ac")
     assert node.max_witness_size == 1 + 64 + 1

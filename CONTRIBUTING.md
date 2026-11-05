@@ -667,11 +667,11 @@ and a database rather than a `uv run`.
 
 ### What gates a merge, and what only reports
 
-`lint.yml`, `test.yml`, `docs.yml` and `integration-bitcoind.yml` produce
-the required checks, and `REPOSITORY.md` reads the rule back from the
-endpoint rather than restating it. So a diff does not reach a review
-without having passed them or passing them beside it on the same sha,
-which is the reliance `REVIEWING.md` provides for.
+`lint.yml`, `test.yml`, `docs.yml`, `integration-bitcoind.yml` and
+`sourcery.yml` produce the required checks, and `REPOSITORY.md` reads the
+rule back from the endpoint rather than restating it. So a diff does not
+reach a review without having passed them or passing them beside it on the
+same sha, which is the reliance `REVIEWING.md` provides for.
 
 | workflow | when | what it varies |
 | --- | --- | --- |
@@ -680,6 +680,7 @@ which is the reliance `REVIEWING.md` provides for.
 | `integration-bitcoind` | pull request, push to main, weekly | — |
 | `claude-review` | pull request, and `@claude` in a comment | — |
 | `api-break` | pull request | — |
+| `sourcery` | pull request | — |
 | `verified-signatures` | push to main | — |
 | `codeql` | pull request, push, and weekly | the languages |
 | `os-ubuntu` | weekly, a release | images × interpreters |
@@ -703,12 +704,12 @@ not a list here. Which day each of the rest runs is section 10 of
 [the organization standard](https://github.com/btclib-org/.github), and
 not this file's to restate.
 
-The gates run one image on one interpreter: `ubuntu-latest`, and the
-version `.python-version` names. `claude-review` gates nothing: a review
-that gates a merge would make a model's judgement a branch rule. Why so
-little gates is the ceiling on concurrent jobs the plan puts on the whole
-organization, and `REPOSITORY.md`'s *Plan-gated settings* is where that
-lives.
+The `test`, `lint`, `docs` and `integration-bitcoind` rows run one image
+on one interpreter: `ubuntu-latest`, and the version `.python-version`
+names. `claude-review` gates nothing: a review that gates a merge would
+make a model's judgement a branch rule. Why so little gates is the ceiling
+on concurrent jobs the plan puts on the whole organization, and
+`REPOSITORY.md`'s *Plan-gated settings* is where that lives.
 `verified-signatures.yml` reports after each push to `main` whether every
 commit pushed is `verified`; [the standard's *Signatures*][s-sigs] has the rule.
 

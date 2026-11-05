@@ -20,15 +20,16 @@ place the answer lives, which is what *Topics* and *Publishing* say of
 them.
 
 Each section carries the command that sets its setting and the command
-that reads it back. **No read-back below has been run yet**: the file
-was written before the repository was created, so a block carries its
-command and no answer, and an id the commands need — a ruleset's, a
-run's — stands as a placeholder. Section 16's step after creation runs
-each read-back and writes what it printed under it, as `#` lines with the
-date; the answers about a release are read again once the first one is
-out. Section 11 makes such an answer documentation, with a reader as its
-check: nothing re-runs these commands, so an answer that differs later
-is a change made since the date beside it.
+that reads it back. **Only the read-back under *Branch protection* has
+its answer recorded**: the file was written before the repository was
+created, so every other block carries its command and no answer, and an
+id the commands need — a ruleset's, a run's — stands as a placeholder.
+Section 16's step after creation runs each read-back and writes what it
+printed under it, as `#` lines with the date; the answers about a
+release are read again once the first one is out. Section 11 makes such
+an answer documentation, with a reader as its check: nothing re-runs
+these commands, so an answer that differs later is a change made since
+the date beside it.
 
 ## Creating the repository
 
@@ -115,6 +116,7 @@ nothing.
 | `lint / Dependency review` | `lint.yml`, calling `reusable-lint.yml` |
 | `lint / Sign-off` | `lint.yml`, calling `reusable-lint.yml` |
 | `regtest / Regtest against Bitcoin Core` | `integration-bitcoind.yml` |
+| `sourcery / Sourcery` | `sourcery.yml`, calling `reusable-sourcery.yml` |
 
 A merge waits for all of these checks, except an administrator's:
 `enforce_admins` is off (*Branch protection*).
@@ -125,6 +127,10 @@ job's own name, so `docs.yml`'s `docs` job calling a job named `Build the
 documentation` produces `docs / Build the documentation`. A context is
 matched by name, not by the workflow that reported it, so moving a job is
 free and renaming one is not.
+
+[Section 10 of the organization's
+standard](https://github.com/btclib-org/.github#the-set-and-its-cadence)
+says when a tree's rule names `sourcery / Sourcery`.
 
 No sentinel appears in the rule, and none of them may: a workflow
 `CONTRIBUTING.md`'s *What gates a merge, and what only reports* lists as
@@ -158,7 +164,8 @@ gh api -X PUT repos/btclib-org/bip32-descriptors/branches/main/protection \
    {"context": "lint / Lint and type-check", "app_id": 15368},
    {"context": "lint / Dependency review", "app_id": 15368},
    {"context": "lint / Sign-off", "app_id": 15368},
-   {"context": "regtest / Regtest against Bitcoin Core", "app_id": 15368}]},
+   {"context": "regtest / Regtest against Bitcoin Core", "app_id": 15368},
+   {"context": "sourcery / Sourcery", "app_id": 15368}]},
  "enforce_admins": false,
  "required_pull_request_reviews": {"dismiss_stale_reviews": true,
    "require_code_owner_reviews": false,
@@ -187,7 +194,22 @@ gh api repos/btclib-org/bip32-descriptors/branches/main/protection \
          force_pushes: .allow_force_pushes.enabled,
          deletions: .allow_deletions.enabled,
          conversation: .required_conversation_resolution.enabled}'
+# {"checks":[["test: every job passed",15368],
+#   ["docs / Build the documentation",15368],
+#   ["lint / Lint and type-check",15368],
+#   ["lint / Dependency review",15368],
+#   ["lint / Sign-off",15368],
+#   ["regtest / Regtest against Bitcoin Core",15368],
+#   ["sourcery / Sourcery",15368]],
+#  "conversation":true,"deletions":false,"enforce_admins":false,
+#  "force_pushes":false,"linear":true,
+#  "reviews":{"dismiss_stale_reviews":true,
+#   "required_approving_review_count":1},
+#  "strict":false}
 ```
+
+Read on 2026-11-05T07:18Z, after a `PATCH` of `required_status_checks`
+carrying the `checks` of the `PUT` above, it printed the answer above.
 
 Three rulesets sit beside it, additive — rules aggregate across rulesets
 and classic protection, taking the most restrictive combination.

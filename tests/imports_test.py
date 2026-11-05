@@ -182,7 +182,7 @@ def test_no_module_imports_a_unit_by_btclibs_name(root: str) -> None:
         for path in sorted(base.rglob("*.py"))
         if (found := _stale_units_imported_by(path))
     }
-    assert stale == {}
+    assert not stale
 
 
 # what each unit may import of the package besides itself, as
@@ -394,7 +394,7 @@ def test_no_module_imports_an_undeclared_distribution() -> None:
         for path in sorted(root.rglob("*.py"))
     }
     assert "descriptors/miniscript.py" in found
-    assert {file: names for file, names in found.items() if names} == {}
+    assert not {file: names for file, names in found.items() if names}
 
 
 def test_btclib_imports_nothing_of_this_package() -> None:
@@ -416,4 +416,4 @@ def test_btclib_imports_nothing_of_this_package() -> None:
             )
         )
     }
-    assert found == {}
+    assert not found
