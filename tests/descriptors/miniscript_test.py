@@ -841,8 +841,12 @@ REFUSED_SCRIPTS = [
     # empty vector, so a push of one zero byte is not the number and the
     # script closes no thresh at all
     ("51010087", "closes no fragment"),
+    # a thresh() closed by OP_XOR, the op code just below OP_EQUAL
+    ("82012088a614" + "00" * 20 + "875186", "closes no fragment"),
     # a script that is two expressions and not one
     ("515193", "closes no fragment"),
+    # a miniscript followed by a push that stops short of its data
+    (f"21{KEY}ac0501", "not a script"),
     # every op code that must be there and is not
     ("9a", "a W expression is expected"),
     # the four fragments a length or a number rules out
