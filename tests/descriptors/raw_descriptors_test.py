@@ -1030,12 +1030,19 @@ def test_a_hand_built_node_or_hash_of_the_wrong_size_is_refused() -> None:
         RawPkhDescriptor(b"\x00").script_pub_key()
 
 
-def test_a_hand_built_tree_too_deep_for_a_control_block_is_refused() -> None:
-    """The parser stops at 128 levels, and so does the walk of a built tree."""
+@pytest.mark.parametrize("right", [False, True])
+def test_a_hand_built_tree_too_deep_for_a_control_block_is_refused(
+    right: bool,
+) -> None:
+    """The parser stops at 128 levels, and so does the walk of a built tree.
+
+    Nested on the left, and on the right (issue
+    btclib-org/bip32-descriptors#38).
+    """
     key = parse(f"tr({XONLY})").key_expressions[0]
     deep: object = RawLeaf(b"\x51")
     for _ in range(129):
-        deep = (deep, RawLeaf(b"\x51"))
+        deep = (RawLeaf(b"\x51"), deep) if right else (deep, RawLeaf(b"\x51"))
     with pytest.raises(BTClibValueError, match="^script tree deeper than 128$"):
         TrDescriptor(key, deep).script_pub_key()  # type: ignore[arg-type]
 

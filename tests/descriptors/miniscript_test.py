@@ -214,6 +214,32 @@ def test_a_tapscript_passes_the_p2wsh_limits(count: int) -> None:
         parse(expression, P2WSH)
 
 
+@pytest.mark.parametrize("keys, ops", [(19, 201), (20, 202)])
+def test_the_ops_of_an_andor_take_its_costliest_branch(keys: int, ops: int) -> None:
+    """Count an andor() either side of the 201 ops of a p2wsh spend.
+
+    Issue btclib-org/bip32-descriptors#38.
+
+    BIP379 counts the non-push op codes and the keys of every
+    OP_CHECKMULTISIG that runs. Here sat(Y) sat(X) runs both multi(),
+    sat(Z) dsat(X) only X's, and the count is the costlier of the two.
+    Bitcoin Core v32.1.0's `getdescriptorinfo` takes the wsh() of 201 ops
+    and refuses 202, as "not sane: needs witnesses that may exceed
+    resource limits".
+    """
+    x = "multi(1," + ",".join(KEYS[40 : 40 + keys]) + ")"
+    y = "multi(1," + ",".join(KEYS[60:80]) + ")"
+    expression = f"andor({x},{y},{and_b_chain(40)})"
+    node = parse(expression, P2WSH)
+    assert node.max_ops == ops
+    assert node.is_within_resource_limits == (ops <= 201)
+    if ops <= 201:
+        parse_descriptor(f"wsh({expression})")
+    else:
+        with pytest.raises(BTClibValueError, match="exceed the resource limits"):
+            parse_descriptor(f"wsh({expression})")
+
+
 def test_a_context_built_at_run_time_is_the_same_context() -> None:
     """Read a context equal to `TAPSCRIPT` but not the same object.
 

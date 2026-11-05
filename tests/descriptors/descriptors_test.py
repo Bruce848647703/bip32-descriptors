@@ -2920,10 +2920,18 @@ def _nested_tree(depth: int) -> str:
     return f"tr({XONLY}," + "{" * depth + leaf + f",{leaf}}}" * depth + ")"
 
 
-def test_tr_tree_depth_is_bounded() -> None:
+def _right_comb(depth: int) -> str:
+    """Return a right comb whose deepest leaves sit under `depth` braces."""
+    leaf = f"pk({XONLY})"
+    return f"tr({XONLY}," + f"{{{leaf}," * depth + leaf + "}" * depth + ")"
+
+
+@pytest.mark.parametrize("tree", [_nested_tree, _right_comb])
+def test_tr_tree_depth_is_bounded(tree: Callable[[int], str]) -> None:
     """A tr() deeper than the control block can prove is refused.
 
-    Issue btclib-org/btclib#571.
+    Issue btclib-org/btclib#571, and for the right comb issue
+    btclib-org/bip32-descriptors#38.
 
     A tree far deeper is refused the same way, as a `BTClibValueError`,
     the class a caller of `parse` catches.
@@ -2934,19 +2942,20 @@ def test_tr_tree_depth_is_bounded() -> None:
     describes is not a spendable output. Both sides of the boundary are
     pinned here, and both were checked against Core v31.1.0's
     `getdescriptorinfo`, which takes 128, refuses 129, and phrases the
-    refusal in the words this one repeats.
+    refusal in the words this one repeats. Core v32.1.0 does the same
+    with the right comb.
     """
     assert taproot.MAX_TREE_DEPTH == 128
 
     # the deepest tree a control block can prove, and one deeper
-    parse(_nested_tree(taproot.MAX_TREE_DEPTH))
+    parse(tree(taproot.MAX_TREE_DEPTH))
     err_msg = "tr\\(\\) supports at most 128 nesting levels"
     with pytest.raises(BTClibValueError, match=err_msg):
-        parse(_nested_tree(taproot.MAX_TREE_DEPTH + 1))
+        parse(tree(taproot.MAX_TREE_DEPTH + 1))
 
     # far past the bound, and past the interpreter's recursion limit
     with pytest.raises(BTClibValueError, match=err_msg):
-        parse(_nested_tree(5000))
+        parse(tree(5000))
 
 
 # what is a descriptor, is not implemented, and is refused by name rather
@@ -3921,6 +3930,23 @@ def test_the_expansion_of_a_tr_is_its_spend_data() -> None:
     assert key_path.taproot_merkle_root == b""
     assert key_path.taproot_tree == []
     assert not key_path.taproot_leaf_scripts
+
+
+def test_the_tap_tree_gives_each_leaf_its_depth() -> None:
+    """Give each leaf of ``{A,{B,C}}`` the depth BIP371 says it is at.
+
+    Issue btclib-org/bip32-descriptors#38.
+
+    A leaf's depth is the number of branches above it. Bitcoin Core
+    v32.1.0's ``descriptorprocesspsbt`` gives the same depth to each
+    script, listing the leaves in the reverse order.
+    """
+    descriptor = parse(f"tr({XONLY},{{pk({XONLY_A}),{{pk({XONLY_B}),pk({XONLY_C})}}}})")
+    assert isinstance(descriptor, TrDescriptor)
+    assert descriptor.taproot_tree() == [
+        (depth, 0xC0, bytes.fromhex(f"20{key}ac"))
+        for depth, key in ((1, XONLY_A), (2, XONLY_B), (2, XONLY_C))
+    ]
 
 
 def test_the_expansion_of_a_rawtr_is_one_taproot_field() -> None:
