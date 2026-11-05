@@ -214,6 +214,24 @@ def test_a_tapscript_passes_the_p2wsh_limits(count: int) -> None:
         parse(expression, P2WSH)
 
 
+def test_a_context_built_at_run_time_is_the_same_context() -> None:
+    """Read a context equal to `TAPSCRIPT` but not the same object.
+
+    The literal ``"tapscript"`` is interned, the same object as
+    `TAPSCRIPT`, so a test written with either cannot tell ``==`` from
+    ``is``. A string built at run time is a new object, and it is still
+    tapscript: for the key it writes, the signature size it bounds and the
+    multisig it allows.
+    """
+    context = b"tapscript".decode()
+    assert context == TAPSCRIPT
+    assert context is not TAPSCRIPT
+    node = parse(f"pk({XONLY})", context)
+    assert node.script() == bytes.fromhex(f"20{XONLY}ac")
+    assert node.max_witness_size == 1 + 64 + 1
+    assert parse(f"multi_a(1,{XONLY})", context).is_valid
+
+
 def older_nesting(count: int) -> str:
     """Return the nesting that reaches `count` + 2 elements on the stack."""
     return "and_b(older(1),a:" * count + f"pk({KEYS[0]})" + ")" * count
