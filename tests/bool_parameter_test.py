@@ -327,11 +327,6 @@ def test_the_walk_reaches_what_it_claims() -> None:
 
     # the convention with a file of its own
     assert not [pair for pair in found if pair[1] == "check_validity"]
-    # a method of a private class, a closure, and a parameter of another
-    # type
-    assert (
-        "bip32_descriptors.bip32.bip32._PythonPubKeyTweakChain.tweak_add",
-        "compressed",
-    ) not in found
+    # a closure, and a parameter of another type
     assert ("bip32_descriptors.descriptors.miniscript.up", "verify") not in found
     assert ("bip32_descriptors.bip32.bip32.derive", "der_path") not in found

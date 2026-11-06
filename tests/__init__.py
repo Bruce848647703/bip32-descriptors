@@ -187,8 +187,7 @@ needs_bindings = pytest.mark.bindings
 # The libsecp256k1 dispatch switched off, shared by the tests that ask the
 # Python arm of a function a question. The dispatch they switch off is the
 # one `ecc.curves.set_libsecp256k1_serving` sets, and this package
-# reaches the bindings through it and through the names its own modules
-# import.
+# reaches the bindings only through ecc.
 # --------------------------------------------------------------------------
 
 
@@ -198,8 +197,8 @@ def _refuse_bindings(monkeypatch: pytest.MonkeyPatch, mod: types.ModuleType) -> 
     A callable is one of the bindings when its own `__module__` is in
     btclib_secp256k1, whatever name `mod` holds it under, so no name of
     `mod` is spelled here. A module `mod` holds is skipped: a caller
-    reaching through one, as bip32 reaches through `keys`, is refused by
-    walking that module itself.
+    reaching through one, as `ecc.curves.sec_point` reaches through
+    `keys`, is refused by walking that module itself.
     """
 
     def refuse(what: str) -> Callable[..., Any]:
@@ -220,27 +219,6 @@ def _refuse_bindings(monkeypatch: pytest.MonkeyPatch, mod: types.ModuleType) -> 
             monkeypatch.setattr(mod, attr, refuse(f"{mod.__name__}.{attr}"))
 
 
-def no_bindings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Switch the libsecp256k1 dispatch off, and the bindings out of reach.
-
-    `curves.set_libsecp256k1_serving` sets what every dispatch reads on
-    every call, so switching it off is the whole dispatch and not one
-    module's copy of a predicate; `tests/conftest.py` puts it back after
-    every test. Refusing every bindings callable the module defining that
-    switch holds is what proves they were not asked anyway: a dispatch
-    this does not cover raises here instead of quietly measuring the
-    bindings against themselves.
-
-    That module is the switch's own `__module__` rather than a name
-    written here, which package defines the dispatch being btclib's to
-    decide.
-    """
-    from ecc.curves import set_libsecp256k1_serving  # noqa: PLC0415
-
-    set_libsecp256k1_serving(serving=False)
-    _refuse_bindings(monkeypatch, sys.modules[set_libsecp256k1_serving.__module__])
-
-
 # the packages `no_bindings_anywhere` walks
 WALKED_PACKAGES = frozenset({"btclib", "ecc", "bip32_descriptors", "btclib_secp256k1"})
 
@@ -248,17 +226,15 @@ WALKED_PACKAGES = frozenset({"btclib", "ecc", "bip32_descriptors", "btclib_secp2
 def no_bindings_anywhere(monkeypatch: pytest.MonkeyPatch) -> None:
     """Put every already-bound btclib_secp256k1 callable out of reach.
 
-    `no_bindings` above refuses only the copies the module defining the
-    dispatch holds, and a copy any other module holds is this walk's,
-    whatever gate stands in front of it: `sec_point` keeps its own
-    `pubkey_from_prvkey` behind the same curve-and-hash gate. The switch
-    is what keeps every copy uncalled either way; the refusals are what
-    show it did. An arm gated on availability alone can
-    hold a binding of its own a module further out --
-    `bip32_descriptors.bip32.bip32` imports `keys`, `btclib.script.taproot`
-    imports `xonly` -- and `from ... import x as y` copies the object
-    rather than looking it up again, so a patch on the module the bindings
-    live in does not reach a name already copied out of it.
+    `curves.set_libsecp256k1_serving` sets what every dispatch reads on
+    every call, so switching it off is the whole dispatch;
+    `tests/conftest.py` puts it back after every test. The switch is what
+    keeps every binding uncalled; the refusals are what show it did. A
+    module can hold a binding of its own -- `ecc.curves.sec_point`
+    imports the bindings' `PubkeyTweakChain` -- and `from ... import x as
+    y` copies the object rather than looking it up again, so a patch on
+    the module the bindings live in does not reach a name already copied
+    out of it.
 
     So this walks every module already loaded under a package of
     `WALKED_PACKAGES` and refuses every bindings callable there, whichever

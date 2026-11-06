@@ -112,23 +112,23 @@ These are known and inherent, and worth stating because this package is
 used to teach and to prototype as much as to build.
 
 - **The arithmetic is ecc's, and so is its notice.** BIP32's derivation
-    reaches libsecp256k1 where ecc's own predicate lets them, through ecc
-    or through the bindings `bip32` calls directly, and runs ecc's Python
-    arithmetic otherwise — which is validated against the bindings but is
-    not constant-time. Which operations cross the boundary, under which
-    conditions, and what the Python path leaks is
+    reaches libsecp256k1 through ecc, where ecc's own predicate lets it,
+    and runs ecc's Python arithmetic otherwise — which is validated
+    against the bindings but is not constant-time. Which operations
+    cross the boundary, under which conditions, and what the Python path
+    leaks is
     [ecc's SECURITY.md](https://github.com/btclib-org/ecc/blob/main/SECURITY.md),
     and this file does not restate it.
 - **An install decides whether the boundary is there.**
     `pip install "bip32-descriptors[secp256k1]"` installs the bindings,
-    through btclib's own extra and by name; `pip install bip32-descriptors`
-    installs no C, and every secret then meets the Python arithmetic.
+    through ecc's own extra; `pip install bip32-descriptors` installs no
+    C, and every secret then meets the Python arithmetic.
     Nothing raises to say so, and `ecc.curves.is_libsecp256k1_serving()`
     is how a caller asks which of the two it has.
-- **BIP32's private derivation delegates where it can**: with the
-    bindings serving, the child key is `secp256k1_ec_seckey_tweak_add`'s;
-    without them it is a sum of Python integers, variable in time with
-    the operands.
+- **BIP32's private derivation delegates where it can**: it is ecc's
+    `prv_key_tweak_add`, so with the bindings serving the child key is
+    `secp256k1_ec_seckey_tweak_add`'s; without them it is a sum of Python
+    integers, variable in time with the operands.
 - **Secret material lives in Python objects**, which are immutable and
     not zeroized: an extended private key, or a private key a descriptor
     carries, stays in the process memory until garbage collection, and

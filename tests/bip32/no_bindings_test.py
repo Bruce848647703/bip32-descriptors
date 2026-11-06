@@ -4,9 +4,10 @@
 
 """BIP32 derivation with btclib_secp256k1 not installed, in a subprocess.
 
-btclib and `bip32_descriptors.bip32.bip32` each ask for the bindings once,
-at import, so whether a derivation answers without them can only be
-asked of an interpreter that has imported neither yet. The bindings are
+ecc asks for the bindings at import, in `ecc._libsecp256k1`, and this
+package reaches them only through ecc, so whether a derivation answers
+without them can only be asked of an interpreter that has not imported
+ecc yet. The bindings are
 put out of reach by a meta path finder that refuses the name, in a child
 interpreter, and this package is imported after that -- which is what
 the import does on a machine that never had them. btclib's own

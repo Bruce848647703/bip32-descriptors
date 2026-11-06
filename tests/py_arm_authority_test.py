@@ -59,14 +59,11 @@ _THIRD_PARTY_VECTORS: dict[str, tuple[str, ...]] = {
 }
 
 # arm -> the modules of `_THIRD_PARTY_VECTORS` whose run reaches it
-_AUTHORITY: dict[str, tuple[str, ...]] = {
-    "bip32.bip32.__prv_key_derivation": ("bip32/bip32_test.py",),
-    "bip32.bip32._pub_key_tweak_chain": ("bip32/bip32_test.py",),
-}
+_AUTHORITY: dict[str, tuple[str, ...]] = {}
 
 
-def _py_arms() -> set[str]:
-    """Return every function of the package that holds a dispatch.
+def _py_arms(library: Path) -> set[str]:
+    """Return every function under `library` that holds a dispatch.
 
     A function whose source calls `is_libsecp256k1_serving` has two arms, and
     the one this file is about is the arm that call declines. The match is
@@ -77,9 +74,9 @@ def _py_arms() -> set[str]:
     module would collide into one entry.
     """
     found: set[str] = set()
-    for path in sorted(_LIBRARY.rglob("*.py")):
+    for path in sorted(library.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        module = ".".join(path.relative_to(_LIBRARY).with_suffix("").parts)
+        module = ".".join(path.relative_to(library).with_suffix("").parts)
         for node in ast.walk(ast.parse(source)):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -91,12 +88,26 @@ def _py_arms() -> set[str]:
 
 def test_every_py_arm_is_in_the_inventory() -> None:
     """An arm added without an entry fails here, which is the point."""
+    # an empty inventory matches an empty scan, so the scan has to have
+    # read the package before its answer counts
+    assert (_LIBRARY / "bip32" / "bip32.py").is_file(), f"no package at {_LIBRARY}"
     listed = set(_AUTHORITY)
-    found = _py_arms()
+    found = _py_arms(_LIBRARY)
     assert listed == found, (
         f"not in the inventory: {sorted(found - listed)};"
         f" gone from the package: {sorted(listed - found)}"
     )
+
+
+def test_the_arm_scan_finds_a_planted_dispatch(tmp_path: Path) -> None:
+    """A scan that found nothing would pass the test above."""
+    (tmp_path / "unit").mkdir()
+    (tmp_path / "unit" / "mod.py").write_text(
+        "def arm():\n    return is_libsecp256k1_serving()\n\n"
+        "def plain():\n    return None\n",
+        encoding="utf-8",
+    )
+    assert _py_arms(tmp_path) == {"unit.mod.arm"}
 
 
 def test_every_arm_has_an_authority() -> None:
@@ -116,8 +127,12 @@ def test_every_named_module_is_in_the_tree_and_reads_its_vectors() -> None:
 
 def test_every_authority_names_a_module_of_the_table() -> None:
     """No entry may cite a module whose vectors are not written down."""
-    for arm, sources in _AUTHORITY.items():
-        for module in sources:
-            assert module in _THIRD_PARTY_VECTORS, (
-                f"{arm} cites {module}, which no line of _THIRD_PARTY_VECTORS covers"
-            )
+    uncovered = [
+        (arm, module)
+        for arm, sources in _AUTHORITY.items()
+        for module in sources
+        if module not in _THIRD_PARTY_VECTORS
+    ]
+    assert not uncovered, (
+        f"cited, and no line of _THIRD_PARTY_VECTORS covers: {uncovered}"
+    )

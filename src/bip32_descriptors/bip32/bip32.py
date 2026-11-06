@@ -23,12 +23,12 @@ A BIP32 extended key is 78 bytes:
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hmac
 import string
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from btclib import base58
 from btclib.alias import BinaryData, Octets, Point, String
@@ -55,12 +55,11 @@ from btclib.utils import (
 )
 from ecc.curves import (
     Curve,
-    bytes_from_point,
+    PubKeyTweakChain,
     bytes_from_prv_key_int,
-    is_libsecp256k1_serving,
     is_x_coordinate_var,
-    mult,
     point_from_octets_var,
+    prv_key_tweak_add,
     secp256k1,
 )
 from typing_extensions import override
@@ -70,15 +69,6 @@ from bip32_descriptors.bip32.der_path import (
     DerPath,
     indexes_from_der_path,
 )
-
-# the bindings, imported from their own package rather than through
-# btclib's private re-export of it; None where they are not installed,
-# which nothing calls: every call is behind `is_libsecp256k1_serving`,
-# False in that configuration
-try:
-    from btclib_secp256k1 import keys as libsecp256k1_keys
-except ImportError:  # pragma: no cover -- only an install without them
-    libsecp256k1_keys = None  # type: ignore[assignment]
 
 __all__ = [
     "BIP328_CHAIN_CODE",
@@ -830,38 +820,17 @@ def __prv_key_derivation(xkey: _BIP32KeyData, index: int, pub_key: bytes) -> Non
     if offset >= _N_BYTES:
         raise _invalid_child(index, "the hmac left half is not a valid scalar")
 
-    # the sum of two scalars, one of them the parent private key:
-    # secp256k1_ec_seckey_tweak_add computes it in constant time, where
-    # Python's own `(a + b) % n` is variable in time with the operands
-    # and leaves an unzeroized copy of each intermediate behind. The key
-    # goes in as the 32 bytes it is stored as rather than as
-    # xkey.prv_key_int, so that no arithmetic on the secret happens
-    # here; the foreign call costs more than the Python sum does, and
-    # both are lost in the hmac and public key of the derivation around
-    # them.
-    #
-    # The dispatch is not on the curve, BIP32 being defined for secp256k1
-    # alone: it is on whether the bindings are there to serve it, which is
-    # the one question `is_libsecp256k1_serving` answers that another curve
-    # would not have asked. What the Python arm below is for is a caller
-    # without them, and SECURITY.md says of it what it says of every
-    # Python path: the arithmetic is on integers and is not constant-time
-    if is_libsecp256k1_serving():
-        try:
-            key = libsecp256k1_keys.prvkey_tweak_add(xkey.key[1:], offset)
-        except ValueError as e:
-            # past the range check above, the one sum libsecp256k1 refuses
-            # is the zero BIP32 refuses too
-            raise _invalid_child(index, "the child private key is zero") from e
-        prv_key_int = int.from_bytes(key, byteorder="big", signed=False)
-    else:
-        # ki = parse256(IL) + kpar (mod n), which is BIP32's own equation
-        prv_key_int = (
-            xkey.prv_key_int + int.from_bytes(offset, byteorder="big", signed=False)
-        ) % secp256k1.n
-        if prv_key_int == 0:
-            raise _invalid_child(index, "the child private key is zero")
-        key = prv_key_int.to_bytes(32, byteorder="big", signed=False)
+    # ki = parse256(IL) + kpar (mod n), which is BIP32's own equation.
+    # Where the bindings serve, `prv_key_tweak_add` computes the sum with
+    # secp256k1_ec_seckey_tweak_add, in constant time; SECURITY.md says
+    # what the Python arm costs
+    try:
+        prv_key_int = prv_key_tweak_add(xkey.prv_key_int, offset)
+    except ValueError as e:
+        # past the range check above, the one sum refused is the zero
+        # BIP32 refuses too
+        raise _invalid_child(index, "the child private key is zero") from e
+    key = prv_key_int.to_bytes(32, byteorder="big", signed=False)
 
     # xkey is mutated only past the checks, so a rejected index leaves
     # it the key it was rather than half a derivation
@@ -880,9 +849,8 @@ def _pub_key_offset(chain_code: bytes, key: bytes, index: int) -> tuple[bytes, b
     aggregate keys of BIP328, which have no private key to derive with.
 
     The 32 octets of the hmac's left half, not the integer they spell:
-    what reads them is `keys.pubkey_tweak_add`, which takes octets, and
-    what `pub_key_derivation_tweaks` answers is octets too, so an integer
-    here would be read out of the hash and written straight back.
+    what `pub_key_derivation_tweaks` answers is octets, and
+    `PubKeyTweakChain.tweak_add_var` takes them as they are.
     """
     xb = key + index.to_bytes(4, byteorder="big", signed=False)
     hmac_ = hmac.new(chain_code, xb, "sha512").digest()
@@ -890,123 +858,6 @@ def _pub_key_offset(chain_code: bytes, key: bytes, index: int) -> tuple[bytes, b
     if offset >= _N_BYTES:
         raise _invalid_child(index, "the hmac left half is not a valid scalar")
     return offset, hmac_[32:]
-
-
-class _PythonPubKeyTweakChain:
-    """What `keys.PubkeyTweakChain` is, in the arithmetic of this library.
-
-    The other half of `_pub_key_offset` above: that answers the scalar a
-    step adds, this adds it to the point. A path is a chain because each
-    step's child is the next step's parent, so the point is held from one
-    step to the next rather than parsed again out of the octets the step
-    before it has just written -- which is what the bindings' class holds
-    it for, and is worth more here: `point_from_octets_var` on a compressed
-    key is a modular square root, far dearer than their own parse, so a
-    path of any length pays one instead of one per level.
-
-    `curves` has the same arithmetic twice over -- `tweak_add_var`
-    ends in `ec.add_var(P, mult(t, ec.G, ec))`, and `TweakChain` is a
-    point with many tweaks of it and the bindings' chain where they serve
-    -- and this is not written here for want of noticing. Three things
-    differ, and each is the whole of a step: `TweakChain`'s tweaks are
-    absolute, measured from the point it was built on, where BIP32's are
-    successive; `tweak_add_var` pays a `require_on_curve` per step, on a
-    point this one has just computed itself; and a refused tweak drops
-    `TweakChain` to the one-shot pair and it answers the next one, where
-    BIP32 has to end the path instead.
-
-    The contract is theirs, so that `_pub_key_tweak_chain` below can
-    answer either and its callers need not know which: `tweak_add`
-    answers the serialized child key and raises `ValueError` for the sum
-    at infinity -- which libsecp256k1 has no public key for and BIP32
-    refuses too, `_invalid_child` being what the callers turn it into --
-    and the constructor raises it for octets that are no point.
-
-    Theirs for every argument a caller here passes, and `compressed` is
-    where the two would part if one did not: `bytes_from_point` refuses a
-    value that is not a bool and their serialization takes it for the
-    flag it is truthy as. This one is the stricter, and stricter is the
-    side to be on -- but it is what makes the order below matter, so it
-    is written here rather than left to be rediscovered from a raise the
-    other implementation does not make. Both callers pass the literal,
-    `compressed` is typed `bool`, and the union alias is what has mypy
-    hold them to it.
-
-    A refused step ends the chain, which is that contract too: "pubkey
-    will be set to an invalid value if this function returns 0" is what
-    libsecp256k1 says of `secp256k1_ec_pubkey_tweak_add`, and that pubkey
-    is what their chain holds. So there is nothing to step from
-    afterwards and neither implementation defines what a further step
-    answers; both callers here raise instead of asking again, a refused
-    index ending the whole derivation.
-
-    Python throughout, and it has to be: with libsecp256k1 in reach their
-    class is the better answer, so a chain that mixed the two would be
-    the one shape never worth building. It cannot mix as written --
-    `mult` and the lift inside `point_from_octets_var` gate on the state
-    `is_libsecp256k1_serving` reads, which is the call that chose this
-    implementation, and cannot answer it differently -- and
-    `test_the_py_arm_reaches_no_bindings` checks that rather than
-    trusting it, a dispatch made finer-grained one day being what would
-    end it silently.
-    """
-
-    def __init__(self, key: bytes) -> None:
-        self._point = point_from_octets_var(key, secp256k1)
-
-    def tweak_add(self, tweak: bytes, compressed: bool = True) -> bytes:
-        """Return the key of point + tweak*G, and step the chain to it."""
-        # Ki = point(parse256(IL)) + Kpar, which is BIP32's own equation
-        point = secp256k1.add_var(
-            self._point, mult(int.from_bytes(tweak, byteorder="big", signed=False))
-        )
-        if not point[1]:
-            # y == 0 is how an affine point spells infinity here, its x
-            # being arbitrary -- INF is (5, 0), and `curve_group`'s
-            # add_aff_var says why: the group has one point more than a
-            # pair of field elements can name, so no formula reaches that
-            # spelling and the one real point with y == 0, a two-torsion
-            # point, has no affine form at all. Comparing with INF would
-            # test the arbitrary x as well
-            raise BTClibValueError("the sum is the point at infinity")
-
-        # serialized before the step is taken, as __prv_key_derivation
-        # mutates only past its own checks: `compressed` is read by
-        # bytes_from_point, which refuses a value that is not a bool, and
-        # a chain left stepped by a call that raised would answer the
-        # next tweak from a point its caller never received
-        sec = bytes_from_point(point, secp256k1, compressed)
-        self._point = point
-        return sec
-
-
-# the two implementations of one chain: what a caller of the function
-# below holds, and neither of them a state the other has to allow for.
-#
-# Under TYPE_CHECKING, because the union is the annotation of two
-# signatures and of nothing else: `from __future__ import annotations`
-# leaves an annotation a string, while a union built at module level is
-# an object, and building this one would ask the bindings for a class
-# where they may not be installed. Nothing calls `get_type_hints` on
-# either signature, which is what would want the name back at runtime
-if TYPE_CHECKING:
-    _PubKeyTweakChain = libsecp256k1_keys.PubkeyTweakChain | _PythonPubKeyTweakChain
-
-
-def _pub_key_tweak_chain(key: bytes) -> _PubKeyTweakChain:
-    """Return the chain a public derivation path is walked with.
-
-    The dispatch, made once for a whole path rather than at every step of
-    it: BIP32 is defined for secp256k1 alone, so what is asked here is
-    not which curve this is but whether the bindings are there to serve
-    it, which is the one question `is_libsecp256k1_serving` answers that
-    another curve would not have asked.
-    """
-    return (
-        libsecp256k1_keys.PubkeyTweakChain(key)
-        if is_libsecp256k1_serving()
-        else _PythonPubKeyTweakChain(key)
-    )
 
 
 # BIP328's chain code, which is the sha256 of "MuSig2MuSig2MuSig2": an
@@ -1052,13 +903,12 @@ def pub_key_derivation_tweaks(
     # no steps is the one spelling of this call that still looks at the
     # key it was handed: [] is the right answer for it, and the right
     # answer for 33 bytes that are not a point is no answer
-    try:
-        chain = _pub_key_tweak_chain(key)
-    except ValueError:
-        chain = None
+    chain: PubKeyTweakChain | None = None
+    with contextlib.suppress(ValueError):
+        chain = PubKeyTweakChain(key)
     if chain is None:
         # the key may be a private scalar: only its prefix is quoted, and
-        # raised outside the `except` so that no `__context__` holds it
+        # raised outside the `suppress` so that no `__context__` holds it
         err_msg = f"invalid public key: not a point, prefix 0x{key[:1].hex()}"
         raise BTClibValueError(err_msg)
 
@@ -1066,32 +916,23 @@ def pub_key_derivation_tweaks(
     for index in indexes:
         offset, code = _pub_key_offset(code, key, index)
         tweaks.append(offset)
-        key = chain.tweak_add(offset, compressed=True)
+        key = chain.tweak_add_var(offset)
     return tweaks
 
 
 def __pub_key_derivation(
-    xkey: _BIP32KeyData, index: int, chain: _PubKeyTweakChain
+    xkey: _BIP32KeyData, index: int, chain: PubKeyTweakChain
 ) -> None:
     offset, chain_code = _pub_key_offset(xkey.chain_code, xkey.key, index)
 
-    # the parent point plus the generator times the offset: one step is
-    # an order of magnitude cheaper where secp256k1_ec_pubkey_tweak_add
-    # computes it than where `add_var(P, mult(t))` does, which is what a
-    # caller without the bindings pays here -- the dispatch being off
-    # altogether on that arm, so the multiplication is Python as well.
-    # xkey holds the key serialized throughout on the delegated one: no
-    # point of btclib's own is ever built, ffi.new's raw C struct staying
-    # inside the bindings.
-    # Compressed on the way out, which is the spelling an extended key
-    # holds: asking for the uncompressed form to read a y out of it costs
-    # a second serialize and the parity arithmetic that follows, for a
-    # coordinate nothing here goes on to use. `chain` is __pub_key_path_
-    # derivation's, held across every index of the path so that only the
-    # first of them pays for parsing xkey.key rather than every one --
-    # and which of the two it holds is its own business
+    # the parent point plus the generator times the offset, answered as
+    # the compressed key an extended key holds. Where the bindings serve,
+    # `PubKeyTweakChain` computes it with secp256k1_ec_pubkey_tweak_add
+    # and builds no Python point. `chain` is __pub_key_path_derivation's,
+    # held across every index of the path, so that only the first of them
+    # pays for parsing xkey.key
     try:
-        sec = chain.tweak_add(offset, compressed=True)
+        sec = chain.tweak_add_var(offset)
     except ValueError as e:
         # past the range check above, the one sum the chain refuses is
         # the point at infinity BIP32 refuses too
@@ -1128,7 +969,7 @@ def __pub_key_path_derivation(xkey: _BIP32KeyData, indexes: list[int]) -> None:
     """
     if any(index >= HARDENED_OFFSET for index in indexes):
         raise BTClibValueError("invalid hardened derivation from public key")
-    chain = _pub_key_tweak_chain(xkey.key)
+    chain = PubKeyTweakChain(xkey.key)
     for index in indexes[:-1]:
         __pub_key_derivation(xkey, index, chain)
     xkey.parent_fingerprint = hash160(xkey.key)[:4]
@@ -1351,7 +1192,7 @@ def derive_from_account_range_(
 
     Which is the larger half of what issue btclib-org/btclib#918 asked about,
     and not the half it named. The parse of the account key is one per *path*
-    and not one per level -- `_PubKeyTweakChain` holds the point across the
+    and not one per level -- `PubKeyTweakChain` holds the key across the
     levels of a walk, so the branch key is never parsed from octets -- so what a
     range saves there is six percent of an address, which is not worth an entry
     point. The level is worth one.

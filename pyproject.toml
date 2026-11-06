@@ -37,11 +37,11 @@ dependencies = [
     "btclib>=2026.10.24",
     # the curve arithmetic and the schemes this tree imports directly:
     # `ecc.curves`, `ecc.curves.sec_point`, `ecc.ecc.musig2`, `ecc.ecc.ssa`
-    # and `ecc.hashes`. The floor is
-    # btclib-wallet's, the release this code is tested against there: the
-    # `deps-oldest` workflow resolves the lowest direct versions and runs
-    # the suite on them
-    "ecc>=2026.10.23",
+    # and `ecc.hashes`. The floor is the release that adds
+    # `ecc.curves.PubKeyTweakChain`, which BIP32's public derivation walks
+    # a path with; the `deps-oldest` workflow resolves the lowest direct
+    # versions and runs the suite on them
+    "ecc>=2026.11.6",
     # `typing.override` is 3.12's and the floor is 3.11, so it comes from
     # the backport; 4.4 is the release that adds it
     "typing-extensions>=4.4",
@@ -79,14 +79,12 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# the libsecp256k1 bindings, named twice. btclib's own extra states the
-# floor btclib's delegation needs; `btclib-secp256k1` is named directly
-# as well because `bip32.bip32` imports its `keys` itself, and the floor
-# is btclib-wallet's for the same import. An extra rather than a
-# dependency for btclib's reason: every delegation declines where the
-# bindings are absent, and the Python arithmetic answers instead. The
-# btclib floor is the one of `dependencies`
-secp256k1 = ["btclib[secp256k1]>=2026.10.24", "btclib-secp256k1>=0.8.0.10"]
+# the libsecp256k1 bindings, through ecc's extra: this package calls them
+# only through ecc, and ecc's extra states which release that takes. An
+# extra rather than a dependency for ecc's reason: every delegation
+# declines where the bindings are absent, and the Python arithmetic
+# answers instead. The floor is the one of `dependencies`
+secp256k1 = ["ecc[secp256k1]>=2026.11.6"]
 
 [project.urls]
 homepage = "https://btclib.org/bip32-descriptors/"
@@ -107,7 +105,7 @@ pull_requests = "https://github.com/btclib-org/bip32-descriptors/pulls"
 # no default extra, so an extra alone would leave `uv sync` resolving a
 # btclib without the bindings, which is half a suite -- the tests marked
 # `bindings` compare the two implementations against each other
-bindings = ["btclib[secp256k1]>=2026.10.24", "btclib-secp256k1>=0.8.0.10"]
+bindings = ["ecc[secp256k1]>=2026.11.6"]
 # what runs the suite, without what the suite delegates to: `test` is the
 # two together, while `harness` alone is the environment a run without
 # the bindings builds. uv's `--no-group` suppresses a group that was
@@ -281,7 +279,7 @@ addopts = "-ra --cov --durations=8 -n auto --dist worksteal --strict-config --st
 xfail_strict = true
 markers = [
     "integration: needs an external program or corpus, opt-in via BTCLIB_INTEGRATION or BTCLIB_QA_ASSETS",
-    "bindings: compares against btclib_secp256k1, so it needs it installed",
+    "bindings: runs on btclib_secp256k1, so it needs it installed",
 ]
 # a deprecation warning is the early form of a break, and there is time to
 # act on it only if it is not silent. An ignore added here names the

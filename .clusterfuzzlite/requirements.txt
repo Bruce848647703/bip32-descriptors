@@ -4,9 +4,9 @@ btclib==2026.11.2 \
     --hash=sha256:957b2d75fe1826fff4f751256f6db8cbdfb0d8ff17f496f0ec7c8a79740d1700 \
     --hash=sha256:aa9341cc14c2baf20e96ee638eaa72e88ff06cc11839fe92eaa735e3fc978ed7
     # via bip32-descriptors
-ecc==2026.10.30 \
-    --hash=sha256:2e07fd160191b027ce312307b6288ef2ad1266d8757f21620d8baa5184557409 \
-    --hash=sha256:6109c1cb2abc363b3f74daa37cb3fb949d2c65d6eca1210daa75673baf0a6406
+ecc==2026.11.6 \
+    --hash=sha256:69c77df15ce06d27206844e83282ff503ac59d7c74416451c182d8a0d2ce7352 \
+    --hash=sha256:dc8d317484307cd8c175e736708e03cc0761fe4581d8bbcdda6cc9a0848d539a
     # via
     #   bip32-descriptors
     #   btclib

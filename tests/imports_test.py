@@ -17,10 +17,9 @@ publish them at their old paths, so a `btclib.bip32` left behind would
 import, run and pass against a copy nobody maintains here.
 
 What a module may import is the standard library, this package and the
-distributions `dependencies` in pyproject.toml names, with the bindings
-of the `secp256k1` extra behind a guard: each file's import statements
-are read statically. And `bip32` imports nothing of the package, while
-`descriptors` imports `bip32` alone.
+distributions `dependencies` in pyproject.toml names: each file's import
+statements are read statically. And `bip32` imports nothing of the
+package, while `descriptors` imports `bip32` alone.
 """
 
 from __future__ import annotations
@@ -335,11 +334,8 @@ def test_each_unit_imports_only_the_units_below_it() -> None:
     assert _layer_violations(Path(bip32_descriptors.__path__[0]).parent) == {}
 
 
-# the distributions `dependencies` names, by their import names, and the
-# bindings of the `secp256k1` extra, which `bip32.bip32` imports in a `try`
-_DECLARED = frozenset(
-    {"btclib", "ecc", "typing_extensions", "btclib_secp256k1", "bip32_descriptors"}
-)
+# the distributions `dependencies` names, by their import names
+_DECLARED = frozenset({"btclib", "ecc", "typing_extensions", "bip32_descriptors"})
 
 
 def _top_level_imports(source: str) -> set[str]:
