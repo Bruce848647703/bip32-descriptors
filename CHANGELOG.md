@@ -19,6 +19,41 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.7
+
+### BIP32 derives through ecc
+
+`bip32` derives through ecc and imports no bindings; ecc's floor is
+2026.11.6, and the `secp256k1` extra names `ecc[secp256k1]` (closes #21).
+
+### str() keeps the key path's hardened marker, as Core does
+
+A hardened step of the key path decides the marker before the wildcard's,
+so `str()` writes Core's string and checksum (closes #9).
+
+### Tests
+
+Tests only: `satisfy`, an andor's op count, a tap tree's depth, checksum
+tails, `from_script`'s refusals and a run-time tapscript context
+(closes #36) (closes #37) (closes #38) (closes #39) (closes #40).
+
+### Sourcery
+
+Sourcery runs on every pull request, and its findings in `src` are
+cleared (issue btclib-org/.github#2005).
+
+### CI and the lock
+
+Every call into btclib-org/.github moves to v2026.11.5, `release.yml`'s
+among them (issue btclib-org/.github#2005); setup-uv moves (#83); btclib
+is locked at 2026.11.2 (closes #5).
+
+### The metadata and the prose
+
+The homepage is `https://btclib.org/bip32-descriptors/` (closes #48);
+the files shared with btclib-org/.github follow it, and comments name the
+`functional-tests` and `ecc` repositories (closes #25) (closes #61).
+
 ## v2026.11.4
 
 ### infer_descriptor answers what parse reads back

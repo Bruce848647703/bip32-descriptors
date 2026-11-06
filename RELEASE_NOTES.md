@@ -9,6 +9,26 @@ number says when a release was cut, and promises nothing about
 compatibility, so a breaking change is announced in this file — read it
 before upgrading, rather than a digit.
 
+## v2026.11.7
+
+This release needs ecc 2026.11.6 or later. The `secp256k1` extra
+installs `ecc[secp256k1]`, where v2026.11.4 named `btclib[secp256k1]`
+and `btclib-secp256k1`: this package reaches the libsecp256k1 bindings
+only through ecc.
+
+`pub_key_derivation_tweaks` refuses a step at the point at infinity with
+ecc's `EccValueError`, with or without the bindings. v2026.11.4 raised a
+bare `ValueError` with the bindings and a `BTClibValueError` without
+them. `EccValueError` is a `ValueError` but no `BTClibException`, so code
+catching `BTClibValueError` there has to catch `EccValueError` from
+`ecc.exceptions` too. `derive` still raises `BTClibValueError`.
+
+`str()` of a key expression whose key path and wildcard harden with
+different symbols writes the key path's symbol, as Bitcoin Core does:
+`wpkh(<xprv>/0h/*')` is written `wpkh(<xpub>/0h/*h)`, where v2026.11.4
+wrote `wpkh(<xpub>/0'/*')`. The string and its checksum change, so a
+stored descriptor of that shape no longer matches what `str()` answers.
+
 ## v2026.11.4
 
 Where `parse` does not read what `infer_descriptor` infers back to the
