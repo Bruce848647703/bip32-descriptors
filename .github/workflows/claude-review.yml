@@ -85,9 +85,8 @@ jobs:
         reads as, or makes an output differ from the vendored vectors
         under tests/**/_data/ is a finding until its test says otherwise.
         So is an import of anything other than the standard library,
-        btclib, ecc, typing_extensions and, behind a guard, the
-        btclib_secp256k1 bindings: REVIEWING.md's "This repository in
-        particular" has the rest. A rule that is stated
+        btclib, ecc and typing_extensions: REVIEWING.md's "This
+        repository in particular" has the rest. A rule that is stated
         without the reason that chose it, a claim no command re-derives, a
         count of anything, a second wording of a fact stated elsewhere, and
         a rule whose own repository does not keep it are the defects the
