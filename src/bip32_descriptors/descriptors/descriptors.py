@@ -2620,10 +2620,9 @@ def _parse_multi(
     network: str,
     prv_keys: dict[str, str],
 ) -> Descriptor:
+    threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
         raise BTClibValueError(f"{name}() takes a threshold and at least one key")
-    if not _THRESHOLD.fullmatch(args[0]):
-        raise BTClibValueError(f"invalid {name}() threshold: digits expected")
     keys, lengths = _read_multipath_keys(
         args[1:],
         lambda key: _parse_key(
@@ -2634,12 +2633,28 @@ def _parse_multi(
             musig_allowed=False,
         ),
     )
-    threshold = _int_from_digits(args[0], f"{name}() threshold")
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
     _assert_multi_size(name, keys, context)
     _assert_multipath_keys(lengths)
     return MultiDescriptor(threshold, keys, sort=name == "sortedmulti", network=network)
+
+
+def _read_multi_threshold(name: str, text: str) -> int:
+    """Return the threshold of a ``multi()`` or ``sortedmulti()``.
+
+    Bitcoin Core reads it as a uint32 before it reads or counts the keys,
+    so a threshold it cannot read is the fault named, whatever the keys
+    hold. Leading zeros are allowed, as Core allows them. No refusal here
+    quotes the threshold, which past 2**32-1 may be a private key in
+    decimal.
+    """
+    if not _THRESHOLD.fullmatch(text):
+        raise BTClibValueError(f"invalid {name}() threshold: digits expected")
+    threshold = _int_from_digits(text, f"{name}() threshold")
+    if threshold > 0xFFFFFFFF:
+        raise BTClibValueError(f"invalid {name}() threshold: not in 0..2**32-1")
+    return threshold
 
 
 def _assert_multi_size(

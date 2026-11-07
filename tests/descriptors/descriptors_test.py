@@ -4839,6 +4839,62 @@ def test_an_impossible_multisig_threshold_is_refused_at_parse(
         parse(wrap.format(f"{name}({threshold},{KEY})"))
 
 
+_MORE_DIGITS = r"^invalid multi\(\) threshold: more than 10 digits$"
+_NOT_UINT32 = r"^invalid multi\(\) threshold: not in 0\.\.2\*\*32-1$"
+_NOT_DIGITS = r"^invalid multi\(\) threshold: digits expected$"
+
+
+@pytest.mark.parametrize(
+    "descriptor,message",
+    [
+        ("multi(9223372036854775808,zz)", _MORE_DIGITS),
+        ("sh(multi(9223372036854775808,zz))", _MORE_DIGITS),
+        ("wsh(multi(9223372036854775808,zz))", _MORE_DIGITS),
+        (
+            "wsh(sortedmulti(9223372036854775808,zz))",
+            r"^invalid sortedmulti\(\) threshold: more than 10 digits$",
+        ),
+        ("wsh(multi(99999999999,zz))", _MORE_DIGITS),
+        ("wsh(multi(4294967296,zz))", _NOT_UINT32),
+        ("wsh(multi(000000000000000000004294967296,zz))", _NOT_UINT32),
+        ("wsh(multi(4294967296))", _NOT_UINT32),
+        ("wsh(multi(+1,zz))", _NOT_DIGITS),
+        ("wsh(multi(-1,zz))", _NOT_DIGITS),
+        ("wsh(multi(,zz))", _NOT_DIGITS),
+        ("wsh(multi(x))", _NOT_DIGITS),
+    ],
+)
+def test_a_multisig_threshold_is_refused_before_its_keys(
+    descriptor: str, message: str
+) -> None:
+    """Core: Multi threshold '...' is not valid.
+
+    Core reads the threshold as a uint32 before it reads or counts the
+    keys, so ``zz`` is never read as one.
+    """
+    with pytest.raises(BTClibValueError, match=message):
+        parse(descriptor)
+
+
+@pytest.mark.parametrize(
+    "threshold", ["0", "4294967295", "04294967295", "000000000000000000004294967295"]
+)
+def test_a_multisig_threshold_core_reads_is_followed_by_its_keys(
+    threshold: str,
+) -> None:
+    """Core: Multi: key 'zz' is not valid."""
+    with pytest.raises(BTClibValueError, match="^invalid key expression$"):
+        parse(f"wsh(multi({threshold},zz))")
+
+
+def test_a_multisig_threshold_is_refused_without_quoting_it() -> None:
+    """A decimal in the threshold's place may be a private key."""
+    decimal = str(int(HEX_PRV, 16))
+    with pytest.raises(BTClibValueError, match=_MORE_DIGITS) as e:
+        parse(f"wsh(multi({decimal},{KEY}))")
+    assert_secret_free(e.value, [decimal])
+
+
 @pytest.mark.parametrize("wrap", ["wsh({})", "sh(wsh({}))"], ids=["wsh", "sh-wsh"])
 def test_a_witness_multisig_of_twenty_keys_parses(wrap: str) -> None:
     """Twenty keys are a witness script Bitcoin Core reads, so parse does."""
