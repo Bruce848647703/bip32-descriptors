@@ -37,7 +37,7 @@ from bip32_descriptors.bip32 import (
     BIP328_CHAIN_CODE,
     BIP32Key,
     BIP32KeyData,
-    crack_prv_key_var,
+    crack_prv_key,
     derive,
     derive_,
     derive_from_account,
@@ -740,25 +740,25 @@ def test_crack() -> None:
     """Recover a parent xprv from its xpub and a child xprv; refuse else."""
     parent_xpub = "xpub6BabMgRo8rKHfpAb8waRM5vj2AneD4kDMsJhm7jpBDHSJvrFAjHJHU5hM43YgsuJVUVHWacAcTsgnyRptfMdMP8b28LYfqGocGdKCFjhQMV"
     child_xprv = "xprv9xkG88dGyiurKbVbPH1kjdYrA8poBBBXa53RKuRGJXyruuoJUDd8e4m6poiz7rV8Z4NoM5AJNcPHN6aj8wRFt5CWvF8VPfQCrDUcLU5tcTm"
-    parent_xprv = crack_prv_key_var(parent_xpub, child_xprv)
+    parent_xprv = crack_prv_key(parent_xpub, child_xprv)
     assert xpub_from_xprv(parent_xprv) == parent_xpub
     # same check with XKeyDict
-    parent_xprv = crack_prv_key_var(
+    parent_xprv = crack_prv_key(
         BIP32KeyData.b58decode(parent_xpub), BIP32KeyData.b58decode(child_xprv)
     )
     assert xpub_from_xprv(parent_xprv) == parent_xpub
 
     err_msg = "extended parent key is not a public key: "
     with pytest.raises(BTClibValueError, match=err_msg):
-        crack_prv_key_var(parent_xprv, child_xprv)
+        crack_prv_key(parent_xprv, child_xprv)
 
     err_msg = "extended child key is not a private key: "
     with pytest.raises(BTClibValueError, match=err_msg):
-        crack_prv_key_var(parent_xpub, parent_xpub)
+        crack_prv_key(parent_xpub, parent_xpub)
 
     child_xpub = xpub_from_xprv(child_xprv)
     with pytest.raises(BTClibValueError, match="not a parent's child: wrong depths"):
-        crack_prv_key_var(child_xpub, child_xprv)
+        crack_prv_key(child_xpub, child_xprv)
 
     # one level too deep with the parent's own fingerprint: `!=` weakened to
     # `<` would let the depth through and crack it
@@ -767,17 +767,17 @@ def test_crack() -> None:
         depth=BIP32KeyData.b58decode(parent_xpub).depth + 2,
     )
     with pytest.raises(BTClibValueError, match="^not a parent's child: wrong depths$"):
-        crack_prv_key_var(parent_xpub, too_deep)
+        crack_prv_key(parent_xpub, too_deep)
 
     child0_xprv = derive(parent_xprv, 0)
     grandchild_xprv = derive(child0_xprv, 0)
     err_msg = "not a parent's child: wrong parent fingerprint"
     with pytest.raises(BTClibValueError, match=err_msg):
-        crack_prv_key_var(child_xpub, grandchild_xprv)
+        crack_prv_key(child_xpub, grandchild_xprv)
 
     hardened_child_xprv = derive(parent_xprv, 0x80000000)
     with pytest.raises(BTClibValueError, match="hardened child derivation"):
-        crack_prv_key_var(parent_xpub, hardened_child_xprv)
+        crack_prv_key(parent_xpub, hardened_child_xprv)
 
 
 def test_bips_pr905() -> None:
@@ -840,7 +840,7 @@ def test_no_key_material_in_repr_or_exceptions() -> None:
     # an xprv passed where an xpub is expected must not be echoed
     child_xprv = derive(xprv, "m/0")
     with pytest.raises(BTClibValueError, match="not a public key: ") as excinfo:
-        crack_prv_key_var(xprv, child_xprv)
+        crack_prv_key(xprv, child_xprv)
     assert xprv not in str(excinfo.value)
 
 
@@ -1366,7 +1366,7 @@ def test_invalid_key_prefix_messages_show_exactly_one_byte() -> None:
     child_xpub_data = BIP32KeyData.b58decode(xpub_from_xprv(XKEY))
     prefix = f"0x{child_xpub_data.key[:1].hex()}"
     with pytest.raises(BTClibValueError) as excinfo:
-        crack_prv_key_var(xpub_from_xprv(XKEY), xpub_from_xprv(XKEY))
+        crack_prv_key(xpub_from_xprv(XKEY), xpub_from_xprv(XKEY))
     assert (
         str(excinfo.value)
         == f"extended child key is not a private key: prefix {prefix}"
@@ -1643,7 +1643,7 @@ def test_cracking_refuses_a_child_its_own_assert_valid_refuses() -> None:
     root = rootxprv_from_seed("0102030405060708090a0b0c0d0e0f10")
     parent_xpub = xpub_from_xprv(root)
     child_xprv = derive(root, "m/0")
-    assert crack_prv_key_var(parent_xpub, child_xprv) == root
+    assert crack_prv_key(parent_xpub, child_xprv) == root
 
     bad_child = replace_unchecked(
         BIP32KeyData.b58decode(child_xprv),
@@ -1653,7 +1653,7 @@ def test_cracking_refuses_a_child_its_own_assert_valid_refuses() -> None:
     with pytest.raises(BTClibValueError, match=err_msg):
         bad_child.assert_valid()
     with pytest.raises(BTClibValueError, match=err_msg):
-        crack_prv_key_var(parent_xpub, bad_child)
+        crack_prv_key(parent_xpub, bad_child)
 
 
 def test_the_object_spellings_answer_what_the_text_ones_answer() -> None:

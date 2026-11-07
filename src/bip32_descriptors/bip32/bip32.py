@@ -74,7 +74,7 @@ __all__ = [
     "BIP328_CHAIN_CODE",
     "BIP32Key",
     "BIP32KeyData",
-    "crack_prv_key_var",
+    "crack_prv_key",
     "derive",
     "derive_",
     "derive_from_account",
@@ -569,8 +569,8 @@ def fingerprint(xkey: BIP32Key) -> bytes:
 
     Here and not in a converter, because it is bip32's own idea (issue
     btclib-org/btclib#1188). `derive` below writes a parent's fingerprint into
-    each child it makes, and `crack_prv_key_var` reads one back to tell whether
-    a parent and a child are that pair.
+    each child it makes, and `crack_prv_key` reads one back to tell whether a
+    parent and a child are that pair.
 
     An xprv answers with its xpub's, the fingerprint being the public
     key's: a pair that gave two would identify one key twice. The
@@ -1270,7 +1270,7 @@ def derive_from_account(
     ).b58encode(check_validity=False)
 
 
-def crack_prv_key_var(parent_xpub: BIP32Key, child_xprv: BIP32Key) -> str:
+def crack_prv_key(parent_xpub: BIP32Key, child_xprv: BIP32Key) -> str:
     """Return the parent xprv from a parent xpub and a non-hardened child.
 
     The known break BIP32 warns about: a non-hardened child's private
