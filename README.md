@@ -74,8 +74,8 @@ Python arithmetic answers instead.
   miniscript: parsing, type checking, the script it compiles to and the
   witness that satisfies it (`descriptors.miniscript`)
 
-[ARCHITECTURE.md](./ARCHITECTURE.md) says how these modules layer and
-which may import which.
+[ARCHITECTURE.md](https://github.com/btclib-org/bip32-descriptors/blob/main/ARCHITECTURE.md)
+says how these modules layer and which may import which.
 
 Every refusal is btclib's `BTClibValueError` or `BTClibTypeError`, or
 ecc's class of the same kind where an argument reaches that package.
@@ -84,7 +84,8 @@ Signing, partially signed transactions and wallets are not here: they
 are [btclib-wallet](https://github.com/btclib-org/btclib-wallet)'s.
 
 The suite answers to vectors their authors publish -- the BIPs', Bitcoin
-Core's and bitcoin-s's -- and [tests/_data/README.md](./tests/_data/README.md)
+Core's and bitcoin-s's -- and
+[tests/_data/README.md](https://github.com/btclib-org/bip32-descriptors/blob/main/tests/_data/README.md)
 pins each vendored file to the upstream commit it was copied from.
 
 ## Installing
@@ -124,24 +125,26 @@ example above is the one the suite checks.
 
 ## Security
 
-[SECURITY.md](./SECURITY.md) says how to report a vulnerability, which
-versions are supported, and how a published file is traced back to the
-run that built it.
-[ASSURANCE_CASE.md](./ASSURANCE_CASE.md) argues why what it promises
-holds: the threat model, the trust boundaries, and the weaknesses a
-package of this kind is exposed to.
+[SECURITY.md](https://github.com/btclib-org/bip32-descriptors/blob/main/SECURITY.md)
+says how to report a vulnerability, which versions are supported, and
+how a published file is traced back to the run that built it.
+[ASSURANCE_CASE.md](https://github.com/btclib-org/bip32-descriptors/blob/main/ASSURANCE_CASE.md)
+argues why what it promises holds: the threat model, the trust
+boundaries, and the weaknesses a package of this kind is exposed to.
 
 ## Contributing
 
 Development is LLM-based: humans are welcome, as long as they are
 comfortable with agentic development ;-). A contribution must have been
 read and understood by the person who submits it.
-[`CONTRIBUTING.md`](./CONTRIBUTING.md#working-with-an-llm) has the rules.
+[`CONTRIBUTING.md`](https://github.com/btclib-org/bip32-descriptors/blob/main/CONTRIBUTING.md#working-with-an-llm)
+has the rules.
 
-[CONTRIBUTING.md](./CONTRIBUTING.md) has the commands each CI job runs,
-verbatim. `uv sync` creates the environment; uv is the only tool that has
-to be installed. [REVIEWING.md](./REVIEWING.md) is what a pull request is
-answered against.
+[CONTRIBUTING.md](https://github.com/btclib-org/bip32-descriptors/blob/main/CONTRIBUTING.md)
+has the commands each CI job runs, verbatim. `uv sync` creates the
+environment; uv is the only tool that has to be installed.
+[REVIEWING.md](https://github.com/btclib-org/bip32-descriptors/blob/main/REVIEWING.md)
+is what a pull request is answered against.
 
 How the organization decides, and who holds which role, is its
 [GOVERNANCE.md](https://github.com/btclib-org/.github/blob/main/GOVERNANCE.md);
@@ -153,7 +156,8 @@ what it intends to do, and what it deliberately does not, is its
 - Documentation: <https://bip32-descriptors.readthedocs.io/>
 - Source: <https://github.com/btclib-org/bip32-descriptors>
 - Releases: <https://github.com/btclib-org/bip32-descriptors/releases>
-- [CHANGELOG.md](./CHANGELOG.md), and [RELEASE_NOTES.md](./RELEASE_NOTES.md)
+- [CHANGELOG.md](https://github.com/btclib-org/bip32-descriptors/blob/main/CHANGELOG.md),
+  and [RELEASE_NOTES.md](https://github.com/btclib-org/bip32-descriptors/blob/main/RELEASE_NOTES.md)
   for what a release asks a user to act on
 
 ---
