@@ -1988,6 +1988,14 @@ class _Built(list[Miniscript]):
     work of a parse by the script size of its context, however the
     thresh() in it are nested: each is analysed in time quadratic in its
     arguments, and the sum is what no nesting escapes.
+
+    The first fragment added without a type is kept, and refused by
+    `assert_typed` once the parse has read the whole expression. Core's
+    parser builds a fragment whatever its type, and its descriptor reader
+    refuses an ill-typed one only once the parser has finished, so a later
+    fault that stops the parser is the one Core names. The first fragment
+    built without a type is the innermost one that failed, its arguments
+    being built before it.
     """
 
     def __init__(self, context: str) -> None:
@@ -1995,6 +2003,7 @@ class _Built(list[Miniscript]):
         self._limit = _max_script_size(context)
         self._context = context
         self._total = 0
+        self._ill_typed: Miniscript | None = None
 
     @override
     def append(self, node: Miniscript) -> None:
@@ -2005,7 +2014,14 @@ class _Built(list[Miniscript]):
                 f"at least {self._total} bytes of script"
             )
             raise _CoreFallbackError(err_msg)
+        if not node.properties and self._ill_typed is None:
+            self._ill_typed = node
         super().append(node)
+
+    def assert_typed(self) -> None:
+        """Refuse the first fragment added without a type, if there is one."""
+        if self._ill_typed is not None:
+            _assert_typed(self._ill_typed)
 
     @override
     def pop(self, index: SupportsIndex = -1) -> Miniscript:
@@ -2024,16 +2040,21 @@ class _Built(list[Miniscript]):
 def _assert_typed(node: Miniscript) -> Miniscript:
     """Return the node, refusing one the type system does not allow.
 
-    Checked as each node is built rather than once at the end, so that
-    what is named is the innermost fragment that failed: the type of an
-    expression is a function of its arguments' types, so an argument
-    without a type gives its parent none, and the outermost fragment is
-    only where that is noticed.
+    Asked of the first node built without a type, so that what is named
+    is the innermost fragment that failed: the type of an expression is a
+    function of its arguments' types, so an argument without a type gives
+    its parent none, and the outermost fragment is only where that is
+    noticed.
     """
     if not node.properties:
         arguments = ", ".join("".join(sorted(sub.properties)) for sub in node.subs)
         err_msg = f"ill-typed miniscript: {node.fragment} over {arguments}"
         raise BTClibValueError(err_msg)
+    return _assert_fits(node)
+
+
+def _assert_fits(node: Miniscript) -> Miniscript:
+    """Return the node, refusing one past the script size of its context."""
     if node.script_size > _max_script_size(node.context):
         err_msg = (
             f"miniscript too large for {node.context}: "
@@ -2044,7 +2065,7 @@ def _assert_typed(node: Miniscript) -> Miniscript:
 
 
 def _built(fragment: str, built: _Built, context: str) -> None:
-    """Build a node from the arguments already built, and check its type.
+    """Build a node from the arguments already built, and check its size.
 
     The sugared wrappers are built as what they stand for: ``t:X`` is
     ``and_v(X,1)``, ``u:X`` is ``or_i(X,0)`` and ``and_n(X,Y)`` is
@@ -2066,7 +2087,7 @@ def _built(fragment: str, built: _Built, context: str) -> None:
     else:
         count = 1 if fragment in _WRAPPERS else _ARITY[fragment]
         arguments = built.drop_last(count)
-    built.append(_assert_typed(Miniscript(fragment, context, arguments)))
+    built.append(_assert_fits(Miniscript(fragment, context, arguments)))
 
 
 def _read_wrappers(
@@ -2412,9 +2433,7 @@ def _read_leaf_fragment(
             )
         raise _CoreFallbackError(f"unbalanced brackets in {name}()")
     built.append(
-        _assert_typed(
-            _read_leaf(name, expression[pos + 1 : end - 1], context, prv_keys)
-        )
+        _assert_fits(_read_leaf(name, expression[pos + 1 : end - 1], context, prv_keys))
     )
     return end
 
@@ -2432,6 +2451,9 @@ def _read_more_thresh(
     char = expression[pos : pos + 1]
     if char == ",":
         if count == _MAX_THRESH_ARGUMENTS:
+            # Core types the expression once it has read every argument;
+            # the rest is not read past this bound
+            built.assert_typed()
             err_msg = f"thresh() takes at most {_MAX_THRESH_ARGUMENTS} arguments"
             raise BTClibValueError(err_msg)
         to_parse.extend(((_MORE_THRESH, count + 1, threshold), (_WRAPPED_EXPR, 0, 0)))
@@ -2443,24 +2465,26 @@ def _read_more_thresh(
         raise _CoreFallbackError(err_msg)
     arguments = built.drop_last(count)
     built.append(
-        _assert_typed(Miniscript("thresh", context, arguments, threshold=threshold))
+        _assert_fits(Miniscript("thresh", context, arguments, threshold=threshold))
     )
     return pos + 1
 
 
-def _assert_no_trailing_text(expression: str, pos: int) -> None:
-    """Refuse text after the miniscript that ends at `pos`.
+def _assert_no_trailing_text(expression: str, pos: int, built: _Built) -> None:
+    """Refuse text after the miniscript that ends at `pos`, then its type.
 
     Core's descriptor reader hands its miniscript parser the text up to
     the first ",", ")" or "}" outside brackets, so text from one of them
-    on is no fault of the miniscript's.
+    on is no fault of the miniscript's, and comes after its type. Here a
+    "}" is read as any other text. Any other text stops Core's parser,
+    before the type.
     """
-    if pos == len(expression):
-        return
     err_msg = "trailing characters after the miniscript"
-    if expression[pos] in ",)":
+    if pos < len(expression) and expression[pos] not in ",)":
+        raise _CoreFallbackError(err_msg)
+    built.assert_typed()
+    if pos < len(expression):
         raise BTClibValueError(err_msg)
-    raise _CoreFallbackError(err_msg)
 
 
 def parse(
@@ -2471,9 +2495,10 @@ def parse(
     """Return the Miniscript of a BIP379 expression, in its context.
 
     Refused where the type system refuses it, naming the innermost
-    fragment that failed, and refused where the top-level expression is
-    not a "B" of a size the context allows: a miniscript that is not both
-    is not a script, and every caller of this wants a script.
+    fragment that failed once the expression is read or a thresh() reaches
+    the bound on its arguments, and refused where the top-level expression
+    is not a "B" of a size the context allows: a miniscript that is not
+    both is not a script, and every caller of this wants a script.
 
     `prv_keys` is `descriptors.parse`'s: the mapping an extended private
     key is filed in, under the extended public key that replaces it, so
@@ -2514,7 +2539,7 @@ def parse(
             )
         else:
             _built(state, built, context)
-    _assert_no_trailing_text(expression, pos)
+    _assert_no_trailing_text(expression, pos, built)
     node = built[0]
     if not _has(node.properties, "B"):
         basic = "".join(sorted(node.properties & _t("BVKW")))
