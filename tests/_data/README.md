@@ -367,10 +367,10 @@ a tool at hand, not a refresh.
 ```text
 repo    bitcoin/bitcoin
 path    src/test/miniscript_tests.cpp
-commit  e8691056c0140f8fa850fc6837dde915ebeb22cc  2026-08-03
-blob    d593fc3bf813ac27dce422d596ae9bf4b8b9e777
+commit  faae016796ed64da493cb175e40fca042fe386e6  2026-10-19
+blob    a71e9f9a23e4fdeef8936ee818c89bcb0d0d2441
 ours    83f5e24eb6344c973bbe377eae37ff92f34ac430
-pulled  2026-08-25
+pulled  2026-08-25, re-pinned to the tip 2026-11-07
 behind  0 revisions; that commit is the tip of the path
 ```
 
@@ -382,11 +382,13 @@ and execution-stack numbers where the call gives them. The regex that
 produced it is not committed -- a one-off pass over C++ source is not a
 tool -- and what re-derives the file is reading those calls again.
 
-The pin between here and the commit this file was previously pinned to
-(`128456b62d5e`) touches none of those calls: every changed line is
-`BOOST_CHECK(a && b && c)` split into one `BOOST_REQUIRE`/`BOOST_CHECK` per
-condition, inside the "Misc unit tests" block below `fixed_tests`'s own
-vectors, not inside a `Test(...)` call. The vendored JSON is unchanged.
+No revision of the path since `128456b62d5e`, the pin this file had
+before `e8691056c014`, touches those calls, so the vendored JSON needs no
+change. `e8691056c014` splits each `BOOST_CHECK(a && b && c)` into one
+`BOOST_REQUIRE`/`BOOST_CHECK` per condition, outside any `Test(...)` call.
+`faae016796ed`, of bitcoin/bitcoin#36579, writes `','` and `')'` for `","`
+and `")"` in the lines that build the `multi_a()` call, one of the calls
+not here (below).
 
 Not vendored as the file itself because there is no data file upstream:
 the vectors are arguments to a C++ function. The blob above is that source
@@ -410,8 +412,8 @@ for those to measure.
 ```text
 repo    bitcoin/bitcoin
 path    src/test/descriptor_tests.cpp
-commit  51ddab532cb38213e2258c24c492bc8a392ffc90  2026-09-14
-pulled  2026-09-21, rawtr() added 2026-08-06
+commit  f5a887c199613be9ddc8a13fbb7934af614fa579  2026-11-06
+pulled  2026-09-21, rawtr() added 2026-08-06, re-pinned to the tip 2026-11-07
 behind  0 revisions; that commit is the tip of the path
 ```
 
@@ -446,7 +448,7 @@ same key when neither of them derives, and a key origin prepended once
 per expression rather than once per participant -- and found neither in
 this tree, so none of those cases is owed here.
 
-The revision this refresh crosses is bitcoin/bitcoin#35819, *test: add
+The last revision to change the cases is bitcoin/bitcoin#35819, *test: add
 coverage for untested descriptor parse error paths*: new lines, almost
 all new `CheckUnparsable` cases, and one new `Check(...)`-shaped case
 asserting that a taptree of exactly 128 nesting levels parses.
@@ -456,6 +458,11 @@ tree accepts by the draft BIP of bitcoin/bips#1721, as
 `tests/descriptors/raw_descriptors_test.py`'s docstring says. The parse of
 the deepest taptree is `test_tr_tree_depth_is_bounded`'s. `CORE_VECTORS`
 gains nothing from it.
+
+The revisions after it, of bitcoin/bitcoin#36091 and bitcoin/bitcoin#36772,
+change only the file's includes and `DoCheck`, the function every `Check`
+case runs through: its assertions and the messages they print. No case
+changes, so nothing here does.
 
 ### Not vendored as a file: the raw node and raw leaf vectors of a closed pull request
 
