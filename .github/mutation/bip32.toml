@@ -12,6 +12,8 @@ module-path = [
     "src/bip32_descriptors/bip32/der_path.py",
 ]
 
+# tests/bip32 alone, part of the suite: CONTRIBUTING.md's *Mutation testing*
+# says what a survivor then needs
 test-command = "python -m pytest -x -q -n0 -p no:randomly tests/bip32"
 
 timeout = 300
@@ -159,9 +161,8 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 #   (both already checked above this point), so `!=` and the one-sided
 #   comparison agree everywhere reachable -- the same bytes-minimum and
 #   non-negative-bound reasoning `key_origin.py`'s own first pass used.
-# - `is_private`'s `self.key[0] == 0` and `__repr__`'s `self.key[:1] ==
-#   b"\x00"` weakened to `<=`: a byte value and a single all-zero byte
-#   string are each their own minimum, so `==` and `<=` coincide.
+# - `is_private`'s `self.key[0] == 0` weakened to `<=`: a byte value is
+#   never below zero, so `==` and `<=` coincide.
 # - four `key[1:]` reads -- in `_assert_valid_key`, `_xpub_from_xprv`,
 #   `_BIP32KeyData.__init__`, and `crack_prv_key` -- widened to `key[0:]`:
 #   each is reached only after its own `key[0] != 0` guard (directly, or
@@ -198,6 +199,11 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 #   never the value actually used -- an unreachable default, the same
 #   class `key_origin.py`'s `_pairs_from_der_path_str` and
 #   `_decode_from_bip32_deriv` are.
+#
+# Checked and left, though not equivalent: `__repr__`'s `self.key[:1] ==
+# b"\x00"` weakened to `<=`. The two differ only on an empty key, which
+# no validated instance holds: the mutant masks its chain code, which the
+# original prints, so the mutant hides more and leaks nothing.
 #
 # Not chased further, the same shape as the first pass's own note: the
 # `signed=False` reads and writes across the various `to_bytes`/

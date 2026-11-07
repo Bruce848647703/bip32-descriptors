@@ -140,17 +140,16 @@ def _cached_base58_decode(address: String) -> bytes:
     `b58decode` still has to construct a fresh one on every call. Bytes
     are the one result here nobody can mutate by accident.
 
-    Every refusal is raised outside the `except`. A bad checksum and a
-    non-ASCII character are cut to fixed text: for a mistyped xprv
-    `base58.decode` quotes the right checksum, a hash of the key, and for
-    a non-ASCII one the character and its position in the key.
+    Every refusal is raised outside the `except`. A bad checksum is cut
+    to `invalid checksum`: at the btclib floor `pyproject.toml` names,
+    `base58.decode` quotes the right checksum, a hash of the key.
     """
     try:
         return base58.decode(address)
     except BTClibValueError as e:
         # the other messages of `base58.decode` quote nothing of the key
         refusal = str(e).split(": ", maxsplit=1)[0]
-        if not refusal.startswith(("invalid checksum", "non-ascii character")):
+        if not refusal.startswith("invalid checksum"):
             refusal = str(e)
     raise BTClibValueError(refusal)
 

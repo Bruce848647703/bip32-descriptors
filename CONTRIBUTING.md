@@ -747,6 +747,9 @@ uv run --locked --no-default-groups --group test --group mutation \
 The session writes each mutation into the source and restores it
 afterwards, so nothing else may read the tree while it runs.
 
+Where a session's `test-command` runs part of the suite, a mutant it lets
+live is a gap only once the whole suite lets it live too.
+
 ### The secrets baseline
 
 `detect-secrets` reads `.secrets.baseline` to decide which findings have
