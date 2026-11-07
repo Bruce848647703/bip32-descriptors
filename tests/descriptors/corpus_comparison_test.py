@@ -77,7 +77,7 @@ def test_a_function_rust_miniscript_does_not_implement_is_read(
     """Bitcoin Core accepts it, rust-miniscript refuses it.
 
     rust-miniscript has no `addr()` of BIP385, `combo()` of BIP384,
-    `rawtr()` of BIP386 or `musig()` of BIP390. It says `unrecognized name`
+    `rawtr()` of BIP394 or `musig()` of BIP390. It says `unrecognized name`
     for the first three, and for `musig()` a parse error.
     """
     # a bare key's script has no address

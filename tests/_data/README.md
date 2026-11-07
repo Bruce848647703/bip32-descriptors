@@ -231,6 +231,29 @@ ones the 2026-08-06 pin held.
 The invalid one that holds multipath participants and a multipath path is
 refused by `parse` with Bitcoin Core's own message.
 
+### Not vendored as a file: BIP394's `rawtr()` vectors
+
+```text
+repo    bitcoin/bips
+path    bip-0394.mediawiki
+commit  bc8b68c9cf60896bb981aa2d7030a5f2f3d32db8  2026-11-06
+pulled  2026-11-07
+behind  0 revisions; that commit is the tip of the path
+```
+
+Verdict: **transcribed**, complete for both lists and cited inline, in
+`tests/descriptors/descriptors_test.py`'s `BIP394_VECTORS` and
+`BIP394_INVALID`: each valid descriptor with the script at each index the
+BIP lists, and each invalid one with the message it is refused with. The
+multipath vector is `BIP394_MULTIPATH`, with the descriptors the BIP
+expands it into and their scripts.
+
+The commit is the one bitcoin/bips#2251 adds, and the merge of that pull
+request, `55916fd835fae2c57d2afedcc2ebea698e760361`, holds the same blob
+of the path. The pin names the pull request's commit because the weekly
+re-check compares a pin with the last commit touching its path, and the
+merge is not that commit.
+
 ### Not vendored as a file: BIP388's wallet-policy vectors
 
 ```text
@@ -398,7 +421,8 @@ cases of the `descriptor_test` case as `CORE_VECTORS` — the descriptor in
 both spellings and the scriptPubKey each expands to, at every index the
 case lists — plus the public spellings of those Core expands from the
 private form alone, which are `HARDENED_PUBLIC` there, and the `rawtr()`
-cases, which no BIP publishes and only this file has.
+cases. BIP394 publishes the one whose key is a WIF, as its second
+vector; the ranged one, under an xprv, is Core's own.
 
 Not vendored as a file because there is no file: the values are literals
 in C++ source, so a copy of it would be a copy of a test program. What

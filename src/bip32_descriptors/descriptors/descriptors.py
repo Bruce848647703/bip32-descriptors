@@ -39,10 +39,9 @@ The grammar read is BIP380 to BIP390:
 - ``addr``, ``raw`` (BIP385)
 - ``tr``, with a key path and a script tree whose leaves are ``pk()``,
   ``multi_a()`` and ``sortedmulti_a()`` (BIP386, BIP387)
-- ``rawtr``, which no BIP specifies: Bitcoin Core's `doc/descriptors.md`
-  is what defines it, and the key it takes is the output key itself
-- ``rawnode``, ``rawleaf`` and ``rawpkh``, which no BIP specifies either,
-  and ``raw`` inside ``sh()``, ``wsh()`` and a ``tr()`` tree: they let a
+- ``rawtr`` (BIP394), whose key is the output key itself
+- ``rawnode``, ``rawleaf`` and ``rawpkh``, which no BIP specifies, and
+  ``raw`` inside ``sh()``, ``wsh()`` and a ``tr()`` tree: they let a
   descriptor say what it knows of an output it knows in part. Bitcoin
   Core's bitcoin/bitcoin#30243 specifies the first two, and the draft BIP
   of bitcoin/bips#1721 specifies ``rawnode`` too. BIP385 says
@@ -2260,13 +2259,10 @@ class TrDescriptor(Descriptor):
 class RawTrDescriptor(Descriptor):
     """``rawtr(KEY)``: the key as the output key itself, no tweak at all.
 
-    No BIP specifies this function. BIP386 specifies ``tr()``, the tree
-    expression and the x-only key inside them and never mentions
-    ``rawtr()``; what defines it is Bitcoin Core's own
-    `doc/descriptors.md`, which also carries the warning this docstring
-    keeps: an output key whose internal key nobody knows cannot be shown
-    to have no hidden script path, so a ``rawtr()`` describes an output a
-    wallet already holds rather than one to build.
+    BIP394 specifies this function, and carries the warning this
+    docstring keeps: an output key whose internal key nobody knows cannot
+    be shown to have no hidden script path, so a ``rawtr()`` describes an
+    output a wallet already holds rather than one to build.
 
     The key is BIP341's *output* key, written into ``OP_1 <32 bytes>`` as
     it is. That is the whole difference from ``tr(KEY)``, which tweaks its

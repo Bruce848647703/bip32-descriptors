@@ -10,15 +10,14 @@ The derivation vectors are Bitcoin Core's own, transcribed from the
 public spelling and the scriptPubKey each expands to, at index 0, 1 and 2
 where the descriptor is ranged. Both spellings are exercised, so a WIF
 and an xprv are checked to reach the script the public key and the xpub
-beside them reach. Core's ``rawtr()`` vectors are read there too, no BIP
-publishing them: the ``rawtr()`` vectors BIP390 does publish are
-``musig()`` ones, and are read from the BIP instead.
+beside them reach. Core's ``rawtr()`` vectors are read there too, and
+BIP394's are read from that BIP.
 
-Not vendored as files, those and BIP386's, BIP387's and BIP390's alike:
-the values are read out of C++ source and mediawiki prose rather than
-copied from a data file, so what this module cites is the path and the
-case, and `tests/_data/README.md` carries the revision each is pinned to
--- which is also what the weekly upstream re-check reads.
+Not vendored as files, those and BIP386's, BIP387's, BIP390's and
+BIP394's alike: the values are read out of C++ source and mediawiki prose
+rather than copied from a data file, so what this module cites is the
+path and the case, and `tests/_data/README.md` carries the revision each
+is pinned to -- which is also what the weekly upstream re-check reads.
 
 Where one of those descriptors has no public spelling to check, Core's
 own flags say why: HARDENED and DERIVE_HARDENED mark a derivation that
@@ -3276,6 +3275,157 @@ BIP390_INVALID = [
 def test_bip390_invalid(descriptor: str, message: str) -> None:
     """Refuse each of BIP390's invalid descriptors, with the reason named."""
     with pytest.raises(BTClibValueError, match=message):
+        parse(descriptor)
+
+
+# BIP394's own test vectors, transcribed from `bip-0394.mediawiki`: a valid
+# descriptor and the scriptPubKey it produces, three of them where the keys
+# derive. The BIP's multipath vector is BIP394_MULTIPATH below
+BIP394_VECTORS: list[tuple[str, list[str]]] = [
+    (
+        "rawtr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)",
+        ["5120a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd"],
+    ),
+    (
+        "rawtr(L4rK1yDtCWekvXuE6oXD9jCYfFNV2cWRpVuPLBcCU2z8TrisoyY1)",
+        ["5120a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd"],
+    ),
+    (
+        "rawtr(77aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11)",
+        ["512077aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11"],
+    ),
+    (
+        "rawtr(03a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)",
+        ["5120a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd"],
+    ),
+    (
+        "rawtr(02a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)",
+        ["5120a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd"],
+    ),
+    (
+        "rawtr(xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc/0/*)",
+        [
+            "51208145454b87fc9ec3557478d6eadc2aea290b50f3c469b828abeb542ae8f8849d",
+            "5120377ad06450813b5f7e10bc94b8b662513398c2d83086f8e67349a00909a5a5a4",
+            "51200a862a965e930b917327d4d08e6309aeb6a4fb0970e133c8ea0d034de04cc3b0",
+        ],
+    ),
+    (
+        "rawtr(musig(KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU74sHUHy8S,03dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659,023590a94e768f8e1815c2f24b4d80a8e3149316c3518ce7b7ad338368d038ca66))",
+        ["5120789d937bade6673538f3e28d8368dda4d0512f94da44cf477a505716d26a1575"],
+    ),
+    (
+        "rawtr(musig(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y)/0/*)",
+        [
+            "51209508c08832f3bb9d5e8baf8cb5cfa3669902e2f2da19acea63ff47b93faa9bfc",
+            "51205ca1102663025a83dd9b5dbc214762c5a6309af00d48167d2d6483808525a298",
+            "51207dbed1b89c338df6a1ae137f133a19cae6e03d481196ee6f1a5c7d1aeb56b166",
+        ],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "descriptor, scripts",
+    [
+        pytest.param(descriptor, scripts, id=vector_id(index, descriptor))
+        for index, (descriptor, scripts) in enumerate(BIP394_VECTORS)
+    ],
+)
+def test_bip394_vector(descriptor: str, scripts: list[str]) -> None:
+    """Reproduce BIP394's own vectors: the script at each index it lists."""
+    parsed = parse(descriptor)
+    assert parsed.is_ranged == (len(scripts) > 1)
+    for index, expected in enumerate(scripts):
+        assert parsed.script_pub_key(index).script.hex() == expected
+
+
+# BIP394's multipath vector, and the descriptors the BIP expands it into,
+# each with the script at each index it lists
+BIP394_MULTIPATH = "rawtr(xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc/<0;1>/*)"
+BIP394_MULTIPATH_EXPANSIONS: list[tuple[str, list[str]]] = [
+    (
+        "rawtr(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/0/*)",
+        [
+            "51208145454b87fc9ec3557478d6eadc2aea290b50f3c469b828abeb542ae8f8849d",
+            "5120377ad06450813b5f7e10bc94b8b662513398c2d83086f8e67349a00909a5a5a4",
+            "51200a862a965e930b917327d4d08e6309aeb6a4fb0970e133c8ea0d034de04cc3b0",
+        ],
+    ),
+    (
+        "rawtr(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/1/*)",
+        [
+            "5120095e95d8c50ae3f3fea93fa8e983f710489f60ff681a658c06eba64622c824b1",
+            "51207512d6bd74e24eeb1ad752d5be800adc5886ded11c5293a9a701db83658b526a",
+            "5120cc9fd211dc0a1c8bb7a106ff831be0e253bc992f21d08fb8a6fd43fae51b9b89",
+        ],
+    ),
+]
+
+
+def test_bip394_multipath_vector() -> None:
+    """Expand BIP394's multipath vector into the BIP's descriptors.
+
+    `multipath_descriptors` keeps the xprv, and the BIP writes each
+    expansion with the xpub: `parse` writes the xpub back, so its text is
+    what is compared. Both spellings reach the BIP's scripts.
+    """
+    expanded = multipath_descriptors(BIP394_MULTIPATH)
+    pairs = zip(expanded, BIP394_MULTIPATH_EXPANSIONS, strict=True)
+    for descriptor, (public, scripts) in pairs:
+        assert str(parse(descriptor)) == public
+        for spelling in (descriptor, public):
+            parsed = parse(spelling)
+            derived = [parsed.script_pub_key(i).script.hex() for i in range(3)]
+            assert derived == scripts
+
+
+# BIP394's invalid descriptors, and what each is refused with. The key that
+# is no point on the curve is refused by the curve library
+BIP394_INVALID = [
+    (
+        "sh(rawtr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))",
+        "not allowed inside sh",
+    ),
+    (
+        "wsh(rawtr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))",
+        "not allowed inside wsh",
+    ),
+    (
+        "rawtr(pk(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))",
+        "not a key expression",
+    ),
+    (
+        "rawtr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,77aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11)",
+        "takes one argument",
+    ),
+    (
+        "rawtr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,pk(77aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11))",
+        "takes one argument",
+    ),
+    ("rawtr(5KYZdUEo39z3FPrtuX2QbbwGnNP5zTd7yyr2SC1j299sBCnWjss)", "uncompressed"),
+    (
+        "rawtr(04a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd5b8dec5235a0fa8722476c7709c02559e3aa73aa03918ba2d492eea75abea235)",
+        "uncompressed",
+    ),
+    ("rawtr()", "No key provided"),
+    (
+        "rawtr(0000000000000000000000000000000000000000000000000000000000000005)",
+        "not a public key",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "descriptor, message",
+    [
+        pytest.param(descriptor, message, id=vector_id(index, descriptor))
+        for index, (descriptor, message) in enumerate(BIP394_INVALID)
+    ],
+)
+def test_bip394_invalid(descriptor: str, message: str) -> None:
+    """Refuse each of BIP394's invalid descriptors, with the reason named."""
+    with pytest.raises(VALUE_ERRORS, match=message):
         parse(descriptor)
 
 
