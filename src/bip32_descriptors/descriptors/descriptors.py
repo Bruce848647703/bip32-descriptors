@@ -689,10 +689,25 @@ def _assert_tree(tree: DescriptorTree) -> None:
     `parse` stops there too. The bound also keeps the recursive walks of a
     tree inside Python's recursion limit, so this one keeps a stack of its
     own.
+
+    A miniscript leaf is refused where any of its nodes is not of the
+    tapscript context. Each node writes its keys in its own context, and
+    BIP342 reads a 33-byte key as an unknown public key type, which any
+    non-empty signature satisfies.
     """
     stack: list[tuple[object, int]] = [(tree, 0)]
     while stack:
         node, depth = stack.pop()
+        if isinstance(node, Miniscript):
+            if node.context != miniscript.TAPSCRIPT:
+                # a hand-built context is any value, so only the library's
+                # own is named, a refusal echoing no value it was given
+                known = node.context == miniscript.P2WSH
+                context = miniscript.P2WSH if known else "another context"
+                err_msg = f"not a tapscript node: {node.fragment} in {context}"
+                raise BTClibValueError(err_msg)
+            stack += [(sub, depth) for sub in node.subs]
+            continue
         if not isinstance(node, tuple):
             assert_type(node, _TREE_NODE_TYPES, "script tree node")
             continue

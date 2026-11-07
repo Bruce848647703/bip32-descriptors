@@ -11,24 +11,28 @@ leaves as a `BTClibTypeError`, and a bound `parse` refuses as a
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
 
-from bip32_descriptors.descriptors import parse
+from bip32_descriptors.descriptors import miniscript, parse
 from bip32_descriptors.descriptors.descriptors import (
     MultiA,
     RawDescriptor,
     RawLeaf,
     TrDescriptor,
 )
+from tests.secret_free import assert_secret_free
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
 _X2 = PrvKeyData(2).pub.sec.hex()[2:]
 (_KEY,) = parse(f"tr({_X})").key_expressions
 (_KEY2,) = parse(f"tr({_X2})").key_expressions
+_C = PrvKeyData(3).pub.sec.hex()
+_RANDOM_HEX = "7e3d796f1b20eb42c57e4f6a0c6ecaf1879529ae1ad154cebf0ed79035de2901"
 
 
 def _nested(levels: int, *, right: bool) -> object:
@@ -91,6 +95,52 @@ def test_a_tr_tree_too_deep_is_refused_when_built(right: bool) -> None:
         tree = _nested(levels, right=right)
         with pytest.raises(BTClibValueError, match="^script tree deeper than 128$"):
             TrDescriptor(_KEY, tree)  # type: ignore[arg-type]
+
+
+def test_a_tr_miniscript_leaf_of_another_context_is_refused() -> None:
+    """A leaf of the p2wsh context would commit to a 33-byte key.
+
+    BIP342 reads that key as an unknown public key type, which any
+    non-empty signature satisfies. Issue btclib-org/bip32-descriptors#111.
+    """
+    expression = f"and_v(v:pk({_C}),older(1))"
+    leaf = miniscript.parse(expression, miniscript.TAPSCRIPT)
+    assert parse(str(TrDescriptor(_KEY, leaf))) == TrDescriptor(_KEY, leaf)
+    p2wsh = miniscript.parse(expression, miniscript.P2WSH)
+    for tree in (p2wsh, (leaf, p2wsh), (p2wsh, _KEY2)):
+        with pytest.raises(BTClibValueError, match="^not a tapscript node: and_v in "):
+            TrDescriptor(_KEY, tree)
+
+
+def test_a_tr_miniscript_leaf_holding_a_node_of_another_context_is_refused() -> None:
+    """Each node writes its keys in its own context, whatever the root's."""
+    p2wsh = miniscript.parse(f"and_v(v:pk({_C}),older(1))", miniscript.P2WSH)
+    verify = p2wsh.subs[0]
+    older = miniscript.Miniscript("older", miniscript.TAPSCRIPT, threshold=1)
+    leaf = miniscript.Miniscript("and_v", miniscript.TAPSCRIPT, (verify, older))
+    with pytest.raises(BTClibValueError, match="^not a tapscript node: v: in P2WSH$"):
+        TrDescriptor(_KEY, leaf)
+
+
+# a fixed random value in each shape a hand-built context can take, and
+# the spelling of it a refusal could print
+_UNKNOWN_CONTEXTS = [
+    (770907403214864877517, "770907403214864877517"),
+    (bytes.fromhex(_RANDOM_HEX), bytes.fromhex(_RANDOM_HEX)),
+    (_RANDOM_HEX, _RANDOM_HEX),
+]
+
+
+@pytest.mark.parametrize("context,spelling", _UNKNOWN_CONTEXTS)
+def test_a_tr_leaf_of_an_unknown_context_is_refused(
+    context: Any, spelling: str | bytes
+) -> None:
+    """A context the library does not define is not echoed, being any value."""
+    leaf = replace(miniscript.parse("1", miniscript.TAPSCRIPT), context=context)
+    err_msg = "^not a tapscript node: 1 in another context$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        TrDescriptor(_KEY, leaf)
+    assert_secret_free(e.value, [spelling])
 
 
 @pytest.mark.parametrize("sort", [False, True])
