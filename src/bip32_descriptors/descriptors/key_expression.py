@@ -505,10 +505,11 @@ def _read_split(arguments: str, read: Callable[[list[str]], _T]) -> _T:
 
 
 def _split_function(expression: str) -> tuple[str, str]:
-    """Return the function name and the argument string it encloses."""
+    """Return the function name and the argument string it encloses.
+
+    The caller has read the name before the "(", and the text ends in ")".
+    """
     open_bracket = expression.find("(")
-    if open_bracket < 1 or not expression.endswith(")"):
-        raise BTClibValueError("not a descriptor expression: expected name(arguments)")
     return expression[:open_bracket], expression[open_bracket + 1 : -1]
 
 

@@ -3054,6 +3054,40 @@ def _parse_miniscript_expression(
     return MiniscriptDescriptor(node, network=network)
 
 
+# what Bitcoin Core names, outside wsh() and tr(), where an expression is
+# neither a function nor a miniscript. At the top level Core quotes the
+# expression, "'<expression>' is not a valid descriptor function": the
+# message here leaves it out, since it can hold a private key
+_NOT_A_FUNCTION = {
+    _TOP: "top-level expression is not a valid descriptor function",
+    _P2SH: "A function is needed within P2SH",
+}
+
+
+def _parse_no_function(
+    expression: str, context: str, network: str, prv_keys: dict[str, str]
+) -> Descriptor:
+    """Return the miniscript of an expression no function takes, or refuse it.
+
+    At the top level and inside ``sh()``, Core reads the expression as a
+    tapscript miniscript too. It names a key it refuses. It refuses a
+    miniscript it reads, sane or not, as one written outside ``wsh()`` and
+    ``tr()``. Otherwise it names its fallback for the position.
+
+    A miniscript the type system refuses is refused here with the
+    miniscript parser's message, where Core names the position.
+    """
+    if context in _MINISCRIPT_CONTEXTS:
+        return _parse_miniscript_expression(expression, context, network, prv_keys)
+    if expression.startswith("multi_a("):
+        _read_unclosed_multisig_keys(expression, miniscript.TAPSCRIPT, prv_keys)
+    try:
+        _parse_miniscript(expression, miniscript.TAPSCRIPT, prv_keys)
+    except miniscript._CoreFallbackError as error:
+        raise BTClibValueError(_NOT_A_FUNCTION[context]) from error
+    raise BTClibValueError("Miniscript expressions can only be used in wsh or tr.")
+
+
 def _parse_expression(
     expression: str, context: str, network: str, prv_keys: dict[str, str]
 ) -> Descriptor:
@@ -3065,12 +3099,11 @@ def _parse_expression(
     are read as the descriptor functions they were before miniscript --
     which is Bitcoin Core's order too, its own parser trying the functions
     it knows and falling through to miniscript for the rest. Core's
-    ``Func`` takes a name only where the text ends in ")", so inside
-    ``wsh()`` a text that does not is read as a miniscript, whatever its
-    name.
+    ``Func`` takes a name only where the text ends in ")", so a text that
+    does not is read as a miniscript, whatever its name.
     """
-    if context == _P2WSH and not expression.endswith(")"):
-        return _parse_miniscript_expression(expression, context, network, prv_keys)
+    if not expression.endswith(")"):
+        return _parse_no_function(expression, context, network, prv_keys)
     name = expression.partition("(")[0]
     if name == "musig":
         # a key expression where a SCRIPT one is expected: BIP390's own
@@ -3085,11 +3118,9 @@ def _parse_expression(
         # which would answer for the same two names as a tapscript
         # fragment written where a p2wsh one belongs
         _assert_position(name, context, (_P2TR,))
-    if name not in _PARSERS and context in _MINISCRIPT_CONTEXTS:
-        return _parse_miniscript_expression(expression, context, network, prv_keys)
-    name, arguments = _split_function(expression)
     if name not in _PARSERS:
-        raise BTClibValueError("unknown descriptor function")
+        return _parse_no_function(expression, context, network, prv_keys)
+    name, arguments = _split_function(expression)
     allowed, parser = _PARSERS[name]
     _assert_position(name, context, allowed)
     # such a function splits nothing, so that a bracket in its argument is

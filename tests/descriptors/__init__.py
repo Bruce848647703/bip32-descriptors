@@ -17,3 +17,9 @@ second module would be those same cases reached by a private function.
 # in a tr() leaf
 P2WSH_FAULT = "^A function is needed within P2WSH$"
 TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"
+# and inside sh() and at the top level, where Core reads as a tapscript
+# miniscript an expression no descriptor function takes
+P2SH_FAULT = "^A function is needed within P2SH$"
+TOP_FAULT = "^top-level expression is not a valid descriptor function$"
+# what Core names there for a miniscript its parser reads
+MINISCRIPT_OUTSIDE = r"^Miniscript expressions can only be used in wsh or tr\.$"

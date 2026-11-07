@@ -17,11 +17,10 @@ from btclib.exceptions import BTClibValueError
 from btclib.key import PrvKeyData
 
 from bip32_descriptors.descriptors import Descriptor, multipath_descriptors, parse
-from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
+from tests.descriptors import P2SH_FAULT, P2WSH_FAULT, TOP_FAULT, TR_LEAF_FAULT
 
 _KEY = PrvKeyData(1).pub.sec.hex()
 _X_ONLY = _KEY[2:]
-_STRUCTURAL = "not a descriptor expression: expected name(arguments)"
 
 
 @pytest.mark.parametrize("read", [parse, multipath_descriptors])
@@ -127,21 +126,22 @@ def test_a_valid_key_does_not_make_trailing_structure_valid(
 
 
 @pytest.mark.parametrize(
-    "descriptor",
+    "descriptor,message",
     [
-        f"sh(multi(1,[dead]]{_KEY})junk))",
-        f"wsh(multi(1,[dead]]{_KEY}",
-        f"tr({_X_ONLY},multi_a(1,[dead]]{_KEY}",
+        (f"sh(multi(1,[dead]]{_KEY})junk))", P2SH_FAULT),
+        (f"wsh(multi(1,[dead]]{_KEY}", TOP_FAULT),
+        (f"tr({_X_ONLY},multi_a(1,[dead]]{_KEY}", TOP_FAULT),
     ],
 )
-def test_no_key_is_read_here(descriptor: str) -> None:
+def test_no_key_is_read_here(descriptor: str, message: str) -> None:
     """Core reads no key here.
 
-    sh() has no miniscript, and wsh() and tr() leave the last key unended.
+    Inside sh() Core's miniscript is a tapscript one, which refuses multi()
+    before its keys. An unclosed wsh() or tr() is no function, and Core's
+    tapscript parser fails on its name.
     """
-    with pytest.raises(BTClibValueError) as caught:
+    with pytest.raises(BTClibValueError, match=message):
         parse(descriptor)
-    assert str(caught.value) == _STRUCTURAL
 
 
 @pytest.mark.parametrize(

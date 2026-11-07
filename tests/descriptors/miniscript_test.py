@@ -80,6 +80,7 @@ from bip32_descriptors.descriptors.miniscript import (
     reads_back,
 )
 from tests import load, vector_id
+from tests.descriptors import MINISCRIPT_OUTSIDE
 
 VECTORS: list[dict[str, Any]] = load("_data", "miniscript_fixed_tests.json")
 
@@ -1184,9 +1185,9 @@ def test_a_miniscript_descriptor_spends_with_a_context() -> None:
 
 
 REFUSED_DESCRIPTORS = [
-    # miniscript is a wsh() expression and nothing else here
-    (f"and_v(v:pk({KEY}),older(1))", "unknown descriptor function"),
-    (f"sh(and_v(v:pk({KEY}),older(1)))", "unknown descriptor function"),
+    # a miniscript is a wsh() or a tr() expression, as Core reads it
+    (f"and_v(v:pk({KEY}),older(1))", MINISCRIPT_OUTSIDE),
+    (f"sh(and_v(v:pk({KEY}),older(1)))", MINISCRIPT_OUTSIDE),
     (f"wsh(s:pk({KEY}))", "not a miniscript script"),
     # and what a descriptor may not hold, sane or not
     ("wsh(and_b(after(100),a:after(1000000000)))", "without signature exist"),

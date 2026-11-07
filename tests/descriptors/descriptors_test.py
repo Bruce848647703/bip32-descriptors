@@ -91,7 +91,7 @@ from bip32_descriptors.descriptors.descriptors import __descsum_expand
 from bip32_descriptors.descriptors.key_expression import _read_split
 from bip32_descriptors.descriptors.miniscript import _ARITY, Miniscript
 from tests import load, vector_id
-from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
+from tests.descriptors import P2WSH_FAULT, TOP_FAULT, TR_LEAF_FAULT
 from tests.exception_family_test import VALUE_ERRORS
 from tests.secret_free import assert_secret_free
 
@@ -2571,9 +2571,9 @@ UNPARSABLE = [
     ("pk(nope(03))", "not a key expression"),
     (f"pkh([deadbeef{KEY})", "missing "),
     # the shape of an expression
-    ("pk", "not a descriptor expression"),
-    ("(pk)", "not a descriptor expression"),
-    (f"nope({KEY})", "unknown descriptor function"),
+    ("pk", TOP_FAULT),
+    ("(pk)", TOP_FAULT),
+    (f"nope({KEY})", TOP_FAULT),
     # a key function's whole argument is its key, as in Core
     (f"pk({KEY},{KEY})", "invalid key expression"),
     (f"multi(x,{KEY})", "threshold"),
@@ -4743,7 +4743,7 @@ UNECHOED = [
     (f"wpkh(#{WIF})", "^invalid descriptor checksum$"),
     (f"wpkh({WIF}))", "^unbalanced brackets$"),
     (f"sh(multi(1,({WIF}))", "^not a key expression$"),
-    (f"wpkh({WIF}", r"^not a descriptor expression: expected name\(arguments\)$"),
+    (f"wpkh({WIF}", TOP_FAULT),
     (f"tr({XPRV_ROOT},{{pk({WIF}),pk({MUSIG_A_WIF})}}x)", "^unbalanced braces$"),
     (
         f"wpkh([{WIF}]{XPRV_ROOT})",
@@ -4786,7 +4786,7 @@ UNECHOED = [
     (f"addr(bc1{HEX_PRV}qqqqqqb)", "^invalid character in checksum$"),
     (f"addr(bc1{HEX_PRV}qqqqqq)", "^invalid checksum$"),
     (f"raw({WIF})", "^Raw script is not hex$"),
-    (f"{WIF}(0)", "^unknown descriptor function$"),
+    (f"{WIF}(0)", TOP_FAULT),
     # Core names its fallback for these, and the fault parse found is in
     # the chain the traceback prints
     (f"wsh({WIF})", P2WSH_FAULT),
