@@ -431,6 +431,25 @@ class MultiA:
     # to agree on an address
     sort: bool = False
 
+    def __post_init__(self) -> None:
+        """Refuse a field of the wrong type, and a k or an n `parse` refuses.
+
+        A threshold of none or of more keys than there are, or more keys
+        than BIP387 allows, describes a script nobody can spend.
+        """
+        if not is_integer(self.threshold):
+            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
+            raise BTClibTypeError(err_msg)
+        assert_type(self.keys, tuple, "keys")
+        for key in self.keys:
+            assert_type(key, KeyExpression, "key")
+        assert_type(self.sort, bool, "sort")
+        name = "sortedmulti_a" if self.sort else "multi_a"
+        if not 1 <= self.threshold <= len(self.keys):
+            raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
+        if len(self.keys) > _MAX_MULTI_A_KEYS:
+            raise BTClibValueError(f"invalid n in k-of-n {name}: {len(self.keys)}")
+
     @override
     def __str__(self) -> str:
         """Return the ``multi_a()`` or ``sortedmulti_a()`` leaf as text."""
@@ -459,19 +478,8 @@ class MultiA:
         The threshold is pushed as OP_1 to OP_16 where an op code means
         it and as the number itself above that, which is what BIP387 says
         and the one place the two spellings differ.
-
-        The bounds are checked here too, for a descriptor built by hand: a
-        threshold of none or of more keys than there are, or more keys than
-        BIP387 allows, describes a script nobody can spend, and the parser
-        refuses it before it gets here.
         """
         pub_keys = self._pub_keys(index, network, prv_keys)
-        if not 1 <= self.threshold <= len(pub_keys):
-            err_msg = f"invalid k in k-of-n multi_a: {self.threshold}"
-            raise BTClibValueError(err_msg)
-        if len(pub_keys) > _MAX_MULTI_A_KEYS:
-            err_msg = f"invalid n in k-of-n multi_a: {len(pub_keys)}"
-            raise BTClibValueError(err_msg)
         script: ScriptList = [pub_keys[0][1:], "OP_CHECKSIG"]
         for pub_key in pub_keys[1:]:
             script += [pub_key[1:], "OP_CHECKSIGADD"]
@@ -608,6 +616,8 @@ def _tree_expression(tree: DescriptorTree) -> str:
 DescriptorLeaf = KeyExpression | MultiA | Miniscript | RawLeaf
 #: A `DescriptorLeaf`, a `RawNode`, or a branch, a tuple of two subtrees.
 DescriptorTree = DescriptorLeaf | RawNode | tuple["DescriptorTree", "DescriptorTree"]
+# what a tree holds where it is not a branch
+_TREE_NODE_TYPES = (KeyExpression, MultiA, Miniscript, RawLeaf, RawNode)
 
 
 def _leaf_keys(leaf: DescriptorLeaf) -> tuple[KeyExpression, ...]:
@@ -667,6 +677,28 @@ def _leaf_version(leaf: DescriptorLeaf) -> int:
     return leaf.version if isinstance(leaf, RawLeaf) else _TAPSCRIPT_LEAF_VERSION
 
 
+def _assert_tree(tree: DescriptorTree) -> None:
+    """Refuse a node of the wrong type, and a tree deeper than MAX_TREE_DEPTH.
+
+    A leaf below that depth has no control block to be spent with, and
+    `parse` stops there too. The bound also keeps the recursive walks of a
+    tree inside Python's recursion limit, so this one keeps a stack of its
+    own.
+    """
+    stack: list[tuple[object, int]] = [(tree, 0)]
+    while stack:
+        node, depth = stack.pop()
+        if not isinstance(node, tuple):
+            assert_type(node, _TREE_NODE_TYPES, "script tree node")
+            continue
+        if len(node) != 2:
+            err_msg = f"a script tree branch takes two subtrees, {len(node)} given"
+            raise BTClibTypeError(err_msg)
+        if depth == MAX_TREE_DEPTH:
+            raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
+        stack += [(node[1], depth + 1), (node[0], depth + 1)]
+
+
 @dataclass(frozen=True)
 class _TreeLeaf:
     """One leaf of a tree walk, with what a control block proves it by."""
@@ -693,13 +725,9 @@ def _tree_walk(
     of branches above each.
 
     A branch puts its leaves one level below itself, and a leaf's depth is
-    the length of the merkle path proving it: refused here, before the
-    recursion, MAX_TREE_DEPTH also bounds the recursion well inside
-    Python's.
+    the length of the merkle path proving it.
     """
     if isinstance(tree, tuple):
-        if depth == MAX_TREE_DEPTH:
-            raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
         left, left_hash = _tree_walk(tree[0], depth + 1, index, network, prv_keys)
         right, right_hash = _tree_walk(tree[1], depth + 1, index, network, prv_keys)
         leaves = [replace(leaf, path=leaf.path + right_hash) for leaf in left]
@@ -1857,6 +1885,11 @@ class RawDescriptor(Descriptor):
     script: bytes
 
     @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.script, bytes, "script")
+
+    @override
     def __str__(self) -> str:
         return _expression("raw", self.script.hex())
 
@@ -2019,6 +2052,13 @@ class TrDescriptor(Descriptor):
 
     internal_key: KeyExpression
     tree: DescriptorTree | None = None
+
+    @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.internal_key, KeyExpression, "internal key")
+        if self.tree is not None:
+            _assert_tree(self.tree)
 
     @override
     def __str__(self) -> str:

@@ -3571,10 +3571,8 @@ def test_an_impossible_multi_a_threshold_is_refused_at_parse_and_at_build(
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(f"tr({XONLY},{name}({threshold},{XONLY},{XONLY}))")
     (key,) = parse(f"tr({XONLY})").key_expressions
-    leaf = MultiA(threshold, (key, key), sort=name == "sortedmulti_a")
-    err_msg = rf"^invalid k in k-of-n multi_a: {threshold}$"
     with pytest.raises(BTClibValueError, match=err_msg):
-        TrDescriptor(key, leaf).script_pub_key()
+        MultiA(threshold, (key, key), sort=name == "sortedmulti_a")
 
 
 @pytest.mark.parametrize("name", ["multi", "sortedmulti"])
