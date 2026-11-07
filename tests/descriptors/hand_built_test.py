@@ -4,14 +4,15 @@
 
 """What `parse` never builds is refused when a descriptor is built by hand.
 
-`RawDescriptor`, `TrDescriptor` and `MultiA`: a field of the wrong type
-leaves as a `BTClibTypeError`, and a bound `parse` refuses as a
-`BTClibValueError`. Issue btclib-org/bip32-descriptors#46.
+A field of the wrong type, in every `Descriptor` fragment and in a
+`MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor` and `MultiA` also
+refuse a value `parse` refuses, as a `BTClibValueError`. Issues
+btclib-org/bip32-descriptors#46 and btclib-org/bip32-descriptors#103.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Any
 
 import pytest
@@ -20,10 +21,22 @@ from btclib.key import PrvKeyData
 
 from bip32_descriptors.descriptors import miniscript, parse
 from bip32_descriptors.descriptors.descriptors import (
+    AddrDescriptor,
+    ComboDescriptor,
+    Descriptor,
+    MiniscriptDescriptor,
     MultiA,
+    MultiDescriptor,
+    PkDescriptor,
+    PkhDescriptor,
     RawDescriptor,
     RawLeaf,
+    RawPkhDescriptor,
+    RawTrDescriptor,
+    ShDescriptor,
     TrDescriptor,
+    WpkhDescriptor,
+    WshDescriptor,
 )
 from tests.secret_free import assert_secret_free
 
@@ -190,3 +203,110 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
     err_msg = f"^invalid k in k-of-n {name}: {threshold}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         MultiA(threshold, keys, sort=sort)
+
+
+_K = PrvKeyData(1).pub.sec.hex()
+_K2 = PrvKeyData(2).pub.sec.hex()
+_MINISCRIPT = parse(f"wsh(and_v(v:pk({_K}),older(1)))")
+assert isinstance(_MINISCRIPT, WshDescriptor)
+# one descriptor of each fragment, as `parse` builds it
+_PARSED: dict[type[Descriptor], Descriptor] = {
+    type(descriptor): descriptor
+    for descriptor in (
+        parse(f"pk({_K})"),
+        parse(f"pkh({_K})"),
+        parse(f"wpkh({_K})"),
+        parse(f"sh(wpkh({_K}))"),
+        parse(f"wsh(pk({_K}))"),
+        _MINISCRIPT.inner,
+        parse(f"multi(1,{_K},{_K2})"),
+        parse(f"combo({_K})"),
+        parse("addr(bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4)"),
+        parse("raw(51)"),
+        parse(f"rawpkh({'00' * 20})"),
+        parse(f"tr({_X})"),
+        parse(f"rawtr({_X})"),
+    )
+}
+_KEY_FIELD_CLASSES = (
+    PkDescriptor,
+    PkhDescriptor,
+    WpkhDescriptor,
+    ComboDescriptor,
+    RawTrDescriptor,
+)
+# (fragment, field, a value of the wrong type, the name the refusal gives)
+_WRONG: list[tuple[type[Descriptor], str, Any, str]] = [
+    *(
+        (cls, "network", value, "network")
+        for cls in _PARSED
+        for value in (5, None, b"mainnet")
+    ),
+    *(
+        (cls, "key", value, "key")
+        for cls in _KEY_FIELD_CLASSES
+        for value in (_K, 5, None, _MINISCRIPT.inner)
+    ),
+    *(
+        (cls, "inner", value, "inner descriptor")
+        for cls in (ShDescriptor, WshDescriptor)
+        for value in (f"pk({_K})", 5, _KEY)
+    ),
+    (MiniscriptDescriptor, "node", "and_v(v:pk(K),older(1))", "miniscript"),
+    (MiniscriptDescriptor, "node", _MINISCRIPT, "miniscript"),
+    (MultiDescriptor, "threshold", "1", "threshold"),
+    (MultiDescriptor, "threshold", 1.0, "threshold"),
+    (MultiDescriptor, "threshold", True, "threshold"),
+    (MultiDescriptor, "keys", [_KEY, _KEY2], "keys"),
+    (MultiDescriptor, "keys", _KEY, "keys"),
+    (MultiDescriptor, "keys", (_KEY, _K2), "key"),
+    (MultiDescriptor, "sort", 1, "sort"),
+    (MultiDescriptor, "sort", "sortedmulti", "sort"),
+    (AddrDescriptor, "addr", b"bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "address"),
+    (AddrDescriptor, "addr", 5, "address"),
+    (RawDescriptor, "script", "51", "script"),
+    (RawPkhDescriptor, "key_hash", "00" * 20, "key hash"),
+    (TrDescriptor, "internal_key", _X, "internal key"),
+    (TrDescriptor, "tree", 5, "script tree node"),
+]
+
+
+def _fragments(cls: type) -> list[type]:
+    """Return every subclass of `cls`, at any depth."""
+    found: list[type] = []
+    subs: list[type] = cls.__subclasses__()
+    for sub in subs:
+        found += [sub, *_fragments(sub)]
+    return found
+
+
+def test_every_field_of_every_fragment_has_a_wrong_type_tried() -> None:
+    """The census: a fragment or a field added later is tried here too."""
+    assert set(_PARSED) == set(_fragments(Descriptor))
+    tried = {(cls, name) for cls, name, _, _ in _WRONG}
+    every = {(cls, f.name) for cls in _PARSED for f in fields(cls)}
+    assert tried == every
+
+
+@pytest.mark.parametrize("cls", list(_PARSED), ids=lambda cls: cls.__name__)
+def test_a_fragment_rebuilt_from_its_own_fields_is_the_same(
+    cls: type[Descriptor],
+) -> None:
+    """The control: each field `parse` builds is one the fragment takes."""
+    descriptor = _PARSED[cls]
+    assert type(descriptor) is cls
+    assert replace(descriptor) == descriptor
+
+
+@pytest.mark.parametrize(
+    "cls,name,value,what",
+    _WRONG,
+    ids=[f"{c.__name__}-{n}-{type(v).__name__}" for c, n, v, _ in _WRONG],
+)
+def test_a_fragment_field_of_another_type_is_refused(
+    cls: type[Descriptor], name: str, value: Any, what: str
+) -> None:
+    """A `BTClibTypeError` when it is built, naming the field."""
+    err_msg = f"^invalid {what} type: "
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_PARSED[cls], **{name: value})
