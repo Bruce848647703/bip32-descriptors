@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from tests.descriptors import bitcoin_s_test
+
 _SCRIPT = Path(__file__).parents[1] / ".github" / "scripts" / "compare_descriptors.py"
 
 
@@ -38,6 +40,14 @@ def script(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     monkeypatch.setitem(sys.modules, "compare_descriptors", module)
     spec.loader.exec_module(module)
     return module
+
+
+def test_bitcoin_s_cases_reads_the_real_file(script: ModuleType) -> None:
+    """Every descriptor of both tables is read, a row naming a constant too."""
+    texts = [case.text for case in script._bitcoin_s_cases()]
+
+    tables = bitcoin_s_test.ACCEPTED + bitcoin_s_test.REFUSED
+    assert texts == [row[0] for row in tables]
 
 
 def test_disagreements_flags_a_refusal_by_rust_alone(script: ModuleType) -> None:

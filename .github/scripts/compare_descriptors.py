@@ -116,10 +116,14 @@ def _fixed_cases() -> Iterator[Case]:
 
 
 def _bitcoin_s_cases() -> Iterator[Case]:
-    """Yield the descriptors of the bitcoin-s test, read without running it."""
+    """Yield the descriptors of the bitcoin-s test, read without running it.
+
+    Only each row's first element, the descriptor, is evaluated: the others
+    may name a constant, which `ast.literal_eval` refuses.
+    """
     path = ROOT / "tests" / "descriptors" / "bitcoin_s_test.py"
     wanted = {"ACCEPTED", "REFUSED"}
-    found: dict[str, list[tuple[str, ...]]] = {}
+    found: dict[str, list[str]] = {}
     for node in ast.parse(path.read_text(encoding="utf-8")).body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
@@ -128,11 +132,14 @@ def _bitcoin_s_cases() -> Iterator[Case]:
         else:
             continue
         if isinstance(target, ast.Name) and target.id in wanted:
-            assert node.value is not None  # noqa: S101 -- narrowed above
-            found[target.id] = ast.literal_eval(node.value)
-    for table, rows in found.items():
-        for index, row in enumerate(rows):
-            yield Case("bitcoin-s", f"{table} {index}", row[0])
+            assert isinstance(node.value, ast.List)  # noqa: S101 -- a table
+            found[target.id] = []
+            for row in node.value.elts:
+                assert isinstance(row, ast.Tuple)  # noqa: S101 -- one row
+                found[target.id].append(ast.literal_eval(row.elts[0]))
+    for table, texts in found.items():
+        for index, text in enumerate(texts):
+            yield Case("bitcoin-s", f"{table} {index}", text)
 
 
 def _checksum_cases() -> Iterator[Case]:
