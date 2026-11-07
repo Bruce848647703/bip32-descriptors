@@ -1062,10 +1062,7 @@ def test_parse_reads_what_core_reads_before_the_brackets_and_the_rest() -> None:
         (f"pkh([deadbeef/0]]{xpub}/0),", "more than one ']'"),
         (f"pkh({xpub}/0),", "not a descriptor expression"),
         (f"pkh({xpub}))", "^unbalanced brackets$"),
-        (
-            f"tr({xpub},{{pk({xpub}),pk({xpub}{{)}})",
-            r"^not a descriptor expression: expected name\(arguments\)$",
-        ),
+        (f"tr({xpub},{{pk({xpub}),pk({xpub}{{)}})", TR_LEAF_FAULT),
         (f"wsh(and_v(v:pk({xpub}}}),older(1)))", P2WSH_FAULT),
         (f"tr(musig({xpub}{{,{xpub})/x)", "musig\\(\\): invalid key expression"),
     ):

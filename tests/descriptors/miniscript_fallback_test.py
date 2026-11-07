@@ -89,6 +89,36 @@ def test_a_tr_leaf_names_the_leaf_fallback(expression: str) -> None:
             parse(descriptor)
 
 
+@pytest.mark.parametrize(
+    "function",
+    [
+        "pk(K)",
+        "pkh(K)",
+        "pk(zz)",
+        "sortedmulti(1,K)",
+        "wpkh(K)",
+        "sh(pk(K))",
+        "sortedmulti_a(1,K)",
+        "raw(51)",
+    ],
+)
+@pytest.mark.parametrize("trailing", ["x", "(", "{"])
+def test_text_after_a_function_is_the_fallback(function: str, trailing: str) -> None:
+    """Core's ``Func`` takes no name whose text does not end in ")".
+
+    So Core reads the text as a miniscript, which fails, and names its
+    fallback. Issue btclib-org/bip32-descriptors#15.
+    """
+    wsh = _written_for(function, P2WSH) + trailing
+    for descriptor in (f"wsh({wsh})", f"sh(wsh({wsh}))"):
+        with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
+            parse(descriptor)
+    leaf = _written_for(function, TAPSCRIPT) + trailing
+    for descriptor in (f"tr({X},{leaf})", f"tr({X},{{pk({X2}),{leaf}}})"):
+        with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
+            parse(descriptor)
+
+
 def test_an_empty_expression_is_the_fallback() -> None:
     """Core reads no fragment in an empty argument, and names its fallback."""
     with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
@@ -106,9 +136,10 @@ def test_a_script_past_the_p2wsh_size_is_the_fallback() -> None:
 
 def test_a_leaf_with_a_private_key_is_not_echoed() -> None:
     """Core's message holds the leaf, and the leaf can hold a private key."""
-    with pytest.raises(BTClibValueError) as caught:
-        parse(f"tr({X},and_v(v:pk({WIF}),foo(1)))")
-    assert WIF not in str(caught.value)
+    for leaf in (f"and_v(v:pk({WIF}),foo(1))", f"pk({WIF})x"):
+        with pytest.raises(BTClibValueError) as caught:
+            parse(f"tr({X},{leaf})")
+        assert WIF not in str(caught.value)
 
 
 @pytest.mark.parametrize(

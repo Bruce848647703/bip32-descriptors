@@ -577,8 +577,8 @@ def test_an_empty_or_ill_formed_argument_is_refused(
                     TR_LEAF_FAULT,
                 ),
                 (f"tr({XONLY},{{rawnode({NODE})}})", "two subtrees"),
-                (f"tr({XONLY},rawnode({NODE})x)", "not a descriptor expression"),
-                (f"tr({XONLY},rawnode({NODE})", "not a descriptor expression"),
+                (f"tr({XONLY},rawnode({NODE})x)", TR_LEAF_FAULT),
+                (f"tr({XONLY},rawnode({NODE})", TR_LEAF_FAULT),
             ]
         )
     ],

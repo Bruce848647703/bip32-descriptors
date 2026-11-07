@@ -73,6 +73,28 @@ def test_a_brace_after_a_miniscript_fragment_is_core_s_fallback() -> None:
         parse(f"tr({_X},{{and_v(v:pk({_X}){{,pk({_X2})}}),pk({_X2})}})")
 
 
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        # Core: 'pk(X){,pk(X2)}' is not a valid descriptor function
+        f"tr({_X},{{pk({_X}){{,pk({_X2})}})",
+        # Core: 'pk(X2)X' is not a valid descriptor function
+        f"tr({_X},{{{{pk({_X}),pk({_X2}){_X}}})",
+        # Core: 'pk(X)(,pk(X2)}' is not a valid descriptor function
+        f"tr({_X},{{pk({_X})(,pk({_X2})}})",
+    ],
+)
+def test_a_pk_leaf_that_runs_into_the_tree_is_core_s_fallback(
+    descriptor: str,
+) -> None:
+    """The leaf Core's ``Expr`` cuts does not end in ")", so it is no ``pk()``.
+
+    Rows 1, 3 and 4 of issue btclib-org/bip32-descriptors#19.
+    """
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
+        parse(descriptor)
+
+
 def test_a_brace_closing_a_miniscript_key_is_core_s_fallback() -> None:
     """Core: A function is needed within P2WSH.
 

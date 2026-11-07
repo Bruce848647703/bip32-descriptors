@@ -2453,10 +2453,15 @@ def _parse_leaf_miniscript(expression: str, prv_keys: dict[str, str]) -> Miniscr
 
 
 def _parse_leaf(expression: str, prv_keys: dict[str, str]) -> DescriptorLeaf | RawNode:
-    """Return a tr() leaf or ``rawnode()``: what ``Expr`` cut, read whole."""
+    """Return a tr() leaf or ``rawnode()``: what ``Expr`` cut, read whole.
+
+    Core's ``Func`` takes a name only where the text ends in ")", so a
+    leaf that does not is read as a miniscript, whatever its name.
+    """
+    if not expression.endswith(")"):
+        return _parse_leaf_miniscript(expression, prv_keys)
     name = expression.partition("(")[0]
-    # An unterminated multi_a falls through to miniscript, as Core does.
-    if name in _TREE_FUNCTIONS and (name != "multi_a" or expression.endswith(")")):
+    if name in _TREE_FUNCTIONS:
         return _read_split(
             _split_function(expression)[1],
             lambda args: _parse_multi_a(name, args, prv_keys),
@@ -2952,8 +2957,13 @@ def _parse_expression(
     ``multi()``, which BIP379 says mean the same thing in both, so those
     are read as the descriptor functions they were before miniscript --
     which is Bitcoin Core's order too, its own parser trying the functions
-    it knows and falling through to miniscript for the rest.
+    it knows and falling through to miniscript for the rest. Core's
+    ``Func`` takes a name only where the text ends in ")", so inside
+    ``wsh()`` a text that does not is read as a miniscript, whatever its
+    name.
     """
+    if context == _P2WSH and not expression.endswith(")"):
+        return _parse_miniscript_expression(expression, context, network, prv_keys)
     name = expression.partition("(")[0]
     if name == "musig":
         # a key expression where a SCRIPT one is expected: BIP390's own
@@ -2969,8 +2979,6 @@ def _parse_expression(
         # fragment written where a p2wsh one belongs
         _assert_position(name, context, (_P2TR,))
     if name not in _PARSERS and context in _MINISCRIPT_CONTEXTS:
-        return _parse_miniscript_expression(expression, context, network, prv_keys)
-    if name == "multi" and context == _P2WSH and not expression.endswith(")"):
         return _parse_miniscript_expression(expression, context, network, prv_keys)
     name, arguments = _split_function(expression)
     if name not in _PARSERS:
