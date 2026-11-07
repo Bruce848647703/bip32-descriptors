@@ -388,11 +388,12 @@ cannot reach.
 
 **`check_validity=False` is not an exemption from this.** It says "do not
 check *now*", not "this object is exempt from here on": these are
-dataclasses whose validity at construction is not validity at use.
-Passing it is supported — `tests/check_validity_test.py` exercises the
-flag — so a public function that takes an already-built object and asks it
-nothing is one a caller can reach with an object the package itself would
-refuse. Every validating dataclass takes `check_validity` keyword-only.
+dataclasses whose validity at construction is not validity at use. Passing
+it is supported — `tests/check_validity_test.py` exercises the flag — so a
+public function that takes an already-built object and asks it nothing is
+one a caller can reach with an object the package itself would refuse. A
+signature that takes `check_validity` takes it keyword-only, so a
+parameter added before it cannot silently move the flag into another slot.
 
 **A `bool` parameter is a kind or a truth, and only the first is
 type-checked.** A flag that decides *what is computed* refuses a non-bool;

@@ -469,8 +469,8 @@ ignore = [
     "raw-string-in-exception",
     "f-string-in-exception",
     "dot-format-in-exception",
-    # `check_validity`, `compressed` and their like are ordinary
-    # positional/default parameters of the public surface
+    # `compressed` and its like are ordinary positional/default parameters
+    # of the public surface
     "boolean-type-hint-positional-argument",
     "boolean-default-value-positional-argument",
     "boolean-positional-value-in-call",

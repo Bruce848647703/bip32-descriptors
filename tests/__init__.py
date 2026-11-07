@@ -157,11 +157,11 @@ def replace_unchecked(instance: Any, **changes: Any) -> Any:
 
     `dataclasses.replace` always re-validates through `__init__` -- right
     for a modified copy meant to stay valid, wrong for a fixture built to
-    fail its own `assert_valid` on purpose. Every frozen, validating
-    dataclass in this project takes `check_validity` the same
-    keyword-only way (`CONTRIBUTING.md`'s "The public surface"), so this
-    is the one helper any of them can use in place of the direct field
-    mutation a frozen instance now refuses.
+    fail its own `assert_valid` on purpose. A frozen dataclass of this
+    project that takes `check_validity` takes it keyword-only
+    (`CONTRIBUTING.md`'s "The public surface"), so this is the one helper
+    any of them can use in place of the direct field mutation a frozen
+    instance now refuses.
     """
     current = {
         field.name: getattr(instance, field.name) for field in fields(instance)

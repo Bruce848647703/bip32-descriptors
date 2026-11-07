@@ -51,8 +51,8 @@ table here or the run is red -- there is no third table, and that is the
 state to keep.
 
 `check_validity` is subtracted by name: it is a convention rather than a
-parameter, held by btclib's own `check_validity_test.py` to one rule over
-every class.
+parameter, held by `tests/check_validity_test.py` to one rule over every
+signature that takes it.
 
 """
 
