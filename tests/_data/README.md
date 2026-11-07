@@ -494,9 +494,9 @@ accepted, with the script, where bitcoin-s refuses.
 The script of a case in `ACCEPTED` is bitcoin-s's; that of a case in
 `ACCEPTED_HERE` is the hash160 or sha256 of `deadbeef`, computed here. The
 checksum of an accepted descriptor, and its addresses where bitcoin-s gives no
-script, are Bitcoin Core 31.1.0's `getdescriptorinfo` and `deriveaddresses`,
-run with no chain on mainnet. Where bitcoin-s gives a checksum, Core's is the
-same.
+script, are what `getdescriptorinfo` and `deriveaddresses` answer, run with no
+chain on mainnet, at the Bitcoin Core release `integration-bitcoind.yml` pins.
+Where bitcoin-s gives a checksum, Core's is the same.
 Core's `getdescriptorinfo` refuses every case the test expects refused.
 
 The test's strings are the pinned files' strings. From the repository root,

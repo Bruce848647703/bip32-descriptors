@@ -2,14 +2,15 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""Miniscript parse failures, as Bitcoin Core v31.1 reports them.
+"""Miniscript parse failures, as Bitcoin Core reports them.
 
-Issue btclib-org/bip32-descriptors#10. Where Core's miniscript parser
-fails without naming a key, Core's descriptor reader names its own
-fallback: "A function is needed within P2WSH" inside wsh(), and
-"'<leaf>' is not a valid descriptor function" in a tr() leaf, which
-parse names without the leaf. What Core names for each descriptor here
-is what getdescriptorinfo answered on an offline node.
+Issue btclib-org/bip32-descriptors#10. Core is the release
+`integration-bitcoind.yml` pins. Where its miniscript parser fails
+without naming a key, its descriptor reader names its own fallback: "A
+function is needed within P2WSH" inside wsh(), and "'<leaf>' is not a
+valid descriptor function" in a tr() leaf, which parse names without the
+leaf. What Core names for each descriptor here is what getdescriptorinfo
+answered on an offline node.
 """
 
 import pytest

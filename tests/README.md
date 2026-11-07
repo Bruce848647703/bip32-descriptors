@@ -71,9 +71,9 @@ runs the replay weekly, and it fails on a directory its checkout lacks.
 repository holds to `parse`, to Bitcoin Core's `getdescriptorinfo` and
 `deriveaddresses`, and to rust-miniscript, and prints each input on which
 they differ. It is run by hand: no workflow runs it. Its docstring names
-the inputs, and a local run needs `cargo`, a `bitcoind` of Bitcoin Core
-v31.1 (the result depends on the release), and, for Core's fuzz corpus, a
-checkout of bitcoin-core/qa-assets:
+the inputs, and a local run needs `cargo`, a `bitcoind` of the Bitcoin Core
+release `integration-bitcoind.yml` pins (the result depends on the release),
+and, for Core's fuzz corpus, a checkout of bitcoin-core/qa-assets:
 
 ```shell
 cargo build --release --locked --target-dir /path/to/build \

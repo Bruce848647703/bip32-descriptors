@@ -31,9 +31,9 @@ a production custody protocol, and the point of them is that one maps to
 miniscript opcode for opcode while the other does not -- ``v:older(n)`` writes
 ``<n> CHECKSEQUENCEVERIFY VERIFY`` where the script written by hand had ``<n>
 CHECKSEQUENCEVERIFY DROP``, so that script is not miniscript at all. Both
-answers were confirmed against Bitcoin Core v31.1: `getdescriptorinfo` accepts
-each expression and `deriveaddresses` gives the address of the script computed
-here.
+answers were confirmed against the Bitcoin Core release
+`integration-bitcoind.yml` pins: `getdescriptorinfo` accepts each expression
+and `deriveaddresses` gives the address of the script computed here.
 """
 
 from __future__ import annotations
@@ -222,10 +222,10 @@ def test_the_ops_of_an_andor_take_its_costliest_branch(keys: int, ops: int) -> N
 
     BIP379 counts the non-push op codes and the keys of every
     OP_CHECKMULTISIG that runs. Here sat(Y) sat(X) runs both multi(),
-    sat(Z) dsat(X) only X's, and the count is the costlier of the two.
-    Bitcoin Core v32.1.0's `getdescriptorinfo` takes the wsh() of 201 ops
-    and refuses 202, as "not sane: needs witnesses that may exceed
-    resource limits".
+    sat(Z) dsat(X) only X's, and the count is the costlier of the two. The
+    `getdescriptorinfo` of the Bitcoin Core release
+    `integration-bitcoind.yml` pins takes the wsh() of 201 ops and refuses
+    202, as "not sane: needs witnesses that may exceed resource limits".
     """
     x = "multi(1," + ",".join(KEYS[40 : 40 + keys]) + ")"
     y = "multi(1," + ",".join(KEYS[60:80]) + ")"
@@ -1339,8 +1339,9 @@ def test_two_unsigned_choices_make_a_signed_satisfaction_malleable() -> None:
     Each ``l:`` of ``ll:0`` is an ``or_i()`` with a dissatisfaction
     through either branch, and neither carries a signature: BIP379's
     algorithm returns DONTUSE for it, and so for the ``or_b()``
-    satisfaction built on it, whose other half is signed. Bitcoin Core
-    v32.1.0's `getdescriptorinfo` refuses the expression in a ``wsh()``
+    satisfaction built on it, whose other half is signed. The
+    `getdescriptorinfo` of the Bitcoin Core release
+    `integration-bitcoind.yml` pins refuses the expression in a ``wsh()``
     as not sane, malleable witnesses exist.
     """
     signature = "30" * 71 + "01"
@@ -1353,8 +1354,9 @@ def test_a_spend_without_a_context_opens_no_older_branch() -> None:
     """Refuse ``older(1)`` where the caller gives no sequence.
 
     A `SpendContext` left at its defaults carries sequence 0, which opens
-    no ``older()``, and sequence 1 opens ``older(1)``. Bitcoin Core
-    v32.1.0's `descriptorprocesspsbt` leaves the same input incomplete at
+    no ``older()``, and sequence 1 opens ``older(1)``. The
+    `descriptorprocesspsbt` of the Bitcoin Core release
+    `integration-bitcoind.yml` pins leaves the same input incomplete at
     sequence 0 and finalizes it at sequence 1.
     """
     signature = "30" * 71 + "01"
@@ -1370,10 +1372,11 @@ def test_a_thresh_is_dissatisfied_by_every_branch_dissatisfied() -> None:
     """Satisfy an ``or_d()`` by its second branch, with the ``thresh()`` shut.
 
     BIP379's one canonical dissatisfaction of a ``thresh()`` dissatisfies
-    every branch, which is two empty pushes here. Bitcoin Core v32.1.0's
-    `descriptorprocesspsbt`, given the third key's private key alone,
-    finalizes the same witness before the script: the signature, then two
-    empty pushes.
+    every branch, which is two empty pushes here. The
+    `descriptorprocesspsbt` of the Bitcoin Core release
+    `integration-bitcoind.yml` pins, given the third key's private key
+    alone, finalizes the same witness before the script: the signature,
+    then two empty pushes.
     """
     signature = "30" * 71 + "01"
     node = parse(f"or_d(thresh(1,pk({KEYS[0]}),s:pk({KEYS[1]})),pk({KEYS[2]}))")
@@ -1483,11 +1486,12 @@ def test_a_tr_miniscript_leaf_is_held_to_the_same_sanity() -> None:
         parse_descriptor(f"tr({KEYS[0]},and_v(1,1))")
 
 
-# a tr() with a miniscript leaf and the regtest address Bitcoin Core v31.1
-# answers for it, from `getdescriptorinfo` and `deriveaddresses`. The
-# address is the output key, which commits to the whole tree, so agreeing
-# on it is agreeing on every leaf script: the tapscript dialect of the
-# fragments, the 32-byte keys, and the order the tree is built in
+# a tr() with a miniscript leaf and the regtest address the Bitcoin Core
+# release integration-bitcoind.yml pins answers for it, from
+# `getdescriptorinfo` and `deriveaddresses`. The address is the output key,
+# which commits to the whole tree, so agreeing on it is agreeing on every
+# leaf script: the tapscript dialect of the fragments, the 32-byte keys, and
+# the order the tree is built in
 CORE_TR_VECTORS = [
     (
         f"tr({CUSTODY_KEYS[0]},and_v(v:pk({CUSTODY_KEYS[1]}),older(36)))",

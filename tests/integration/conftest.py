@@ -82,9 +82,9 @@ def _bitcoind_args(bitcoind: Sequence[str], datadir: Path, port: int) -> list[st
         f"-rpcport={port}",
         "-rpcbind=127.0.0.1",
         # without it bitcoind ignores `-rpcbind` and binds `::1` as well as
-        # `127.0.0.1` (src/httpserver.cpp), and keeps running when only
-        # `127.0.0.1` is taken, which the start-again on a taken port
-        # cannot see
+        # `127.0.0.1` (src/httpserver.cpp, bitcoin/bitcoin@f0de87f040), and
+        # keeps running when only `127.0.0.1` is taken, which the
+        # start-again on a taken port cannot see
         "-rpcallowip=127.0.0.1",
         "-listen=0",
         "-natpmp=0",
@@ -156,9 +156,9 @@ _BIND_ATTEMPTS = 5
 
 
 # what bitcoind writes to its `debug.log` when it cannot bind a port: its
-# rpc port (src/httpserver.cpp) or its p2p port ("Unable to bind to
-# <address> on this computer"); `-printtoconsole=0` leaves its stdout
-# empty
+# rpc port (src/httpserver.cpp, bitcoin/bitcoin@f0de87f040) or its p2p
+# port ("Unable to bind to <address> on this computer"); `-printtoconsole=0`
+# leaves its stdout empty
 _NODE_PORT_TAKEN = (
     "Unable to bind any endpoint for RPC server",
     "Unable to bind to ",

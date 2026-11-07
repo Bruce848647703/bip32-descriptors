@@ -847,9 +847,10 @@ def _taproot_derivations(
     plain key and the leaves of every group it is in.
 
     Bitcoin Core gives a participant the hash of every leaf of the tree
-    instead, because `SignMuSig2` in its `src/script/sign.cpp` fills in
-    the participants of every aggregate for each leaf key it cannot sign
-    for. Here an entry names only the leaves its key can sign.
+    instead, because `SignMuSig2` in its `src/script/sign.cpp`
+    (bitcoin/bitcoin@f0de87f040) fills in the participants of every
+    aggregate for each leaf key it cannot sign for. Here an entry names
+    only the leaves its key can sign.
 
     Where one key is spelled more than once, an explicit origin beats one
     `_derived_origin` makes up, and then a plain key's origin beats a

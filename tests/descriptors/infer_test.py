@@ -4,10 +4,11 @@
 
 """Tests for `infer_descriptor`, held to Bitcoin Core's `InferDescriptor`.
 
-`SHAPES` and `SCRIPTS` are bitcoind v32.1.0's answers. A shape's are what
-`scantxoutset` answers for the scripts its descriptor describes at index
-0, with the provider that descriptor's expansion fills. A script's are
-what `decodescript` answers, with an empty provider.
+`SHAPES` and `SCRIPTS` are the answers of the bitcoind release
+`integration-bitcoind.yml` pins. A shape's are what `scantxoutset`
+answers for the scripts its descriptor describes at index 0, with the
+provider that descriptor's expansion fills. A script's are what
+`decodescript` answers, with an empty provider.
 `tests/integration/infer_test.py` asks the node again. `NOT_PARSED` holds
 the answers of the scripts whose Core answer `parse` refuses.
 
@@ -418,9 +419,11 @@ def test_parse_refuses_the_core_answer_of_each_not_parsed_script(name: str) -> N
 
 
 def test_core_scantxoutset_vectors() -> None:
-    """`test/functional/rpc_scantxoutset.py` at the v31.1 tag, lines 116-118.
+    """Bitcoin Core's functional test vectors for `scantxoutset`.
 
-    The ``pkh()`` of a ``combo()``, the second of its scripts.
+    `test/functional/rpc_scantxoutset.py`, bitcoin/bitcoin@f0de87f040,
+    lines 118-120. The ``pkh()`` of a ``combo()``, the second of its
+    scripts.
     """
     tprv = (
         "tprv8ZgxMBicQKsPd7Uf69XL1XwhmjHopUGep8GuEiJDZmbQz6o58LninorQ"

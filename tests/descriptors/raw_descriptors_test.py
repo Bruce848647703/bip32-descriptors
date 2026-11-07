@@ -6,8 +6,8 @@
 
 No BIP specifies ``rawnode()``, ``rawleaf()`` or ``rawpkh()``. BIP385
 refuses a nested ``raw()``, and the draft BIP of bitcoin/bips#1721 allows
-it. Bitcoin Core v31.1 reads none of them. The
-vectors come from two closed proposals, read at the pins of
+it. The Bitcoin Core release `integration-bitcoind.yml` pins reads none of
+them. The vectors come from two closed proposals, read at the pins of
 `tests/_data/README.md`:
 
 - bitcoin/bitcoin PR 30243, which implements ``rawnode()`` and
@@ -25,10 +25,11 @@ btclib's hashes and taproot primitives and `hashlib`, importing nothing of
 or a ``wsh()`` is the hash160 or the sha256 of its script, and a tree is
 folded with BIP341's tagged hashes, a ``rawnode()`` standing for the leaf
 hash of the leaf it hides. Where Bitcoin Core reads an equivalent
-descriptor, each script was also compared with Core v31.1.0's
-`deriveaddresses` of it, which `tests/integration/raw_descriptors_test.py`
-asks again. That equivalent is the third entry. Core has none for another
-leaf version, and those scripts are btclib's `output_pubkey` of the tree.
+descriptor, each script was also compared with what `deriveaddresses`
+answers for it at the release `integration-bitcoind.yml` pins, which
+`tests/integration/raw_descriptors_test.py` asks again. That equivalent
+is the third entry. Core has none for another leaf version, and those
+scripts are btclib's `output_pubkey` of the tree.
 
 Core's `raw()` is top level only, and it refuses ``sh(raw(00))``. This
 package accepts it.
