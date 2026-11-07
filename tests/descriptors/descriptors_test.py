@@ -4903,6 +4903,28 @@ def test_a_redeem_script_over_520_bytes_is_refused(
         parse(f"sh({name}(1,{keys}))")
 
 
+def test_a_hand_built_sh_over_520_bytes_has_no_spend() -> None:
+    """`satisfy` refuses as `script_pub_key` does: no spend without an output.
+
+    Sixteen keys make the 547-byte redeem script the parser refuses above,
+    so the descriptor is built by hand.
+    """
+    multi = MultiDescriptor(
+        1,
+        tuple(
+            KeyExpression(pub_key=PrvKeyData(prv_key).pub.sec)
+            for prv_key in range(1, 17)
+        ),
+    )
+    descriptor = ShDescriptor(multi)
+    for question in (
+        descriptor.script_pub_key,
+        lambda: descriptor.satisfy(signatures_of(KEY_A)),
+    ):
+        with pytest.raises(BTClibValueError, match="exceeds size limit: 547 > 520$"):
+            question()
+
+
 NETWORK_KEYS = [
     pytest.param(WIF, "regtest", "WIF prefix", id="mainnet-wif-on-regtest"),
     pytest.param(

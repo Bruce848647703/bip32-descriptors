@@ -1525,8 +1525,8 @@ class ShDescriptor(Descriptor):
         pushes and nothing else, so serializing them together and
         serializing them apart give the same bytes.
         """
+        redeem_script = _embedded(self, index, prv_keys)
         script_sig, witness = self.inner._satisfy(signatures, index, prv_keys, spend)
-        redeem_script = self.inner.redeem_script(index, prv_keys)
         return script_sig + serialize(cast(ScriptList, [redeem_script])), witness
 
     @override
@@ -1581,8 +1581,9 @@ class WshDescriptor(Descriptor):
         stack already, so BIP141 puts them in it one by one and the
         witness script last.
         """
+        witness_script = _embedded(self, index, prv_keys)
         stack = self.inner._stack(signatures, index, prv_keys, spend)
-        return b"", Witness([*stack, self.inner.redeem_script(index, prv_keys)])
+        return b"", Witness([*stack, witness_script])
 
     @override
     def _expansion(self, index: int, prv_keys: PrvKeys | None) -> Expansion:

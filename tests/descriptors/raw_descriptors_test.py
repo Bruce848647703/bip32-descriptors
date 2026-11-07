@@ -1125,6 +1125,7 @@ def test_a_hand_built_raw_over_the_limit_answers_nothing(
         descriptor.script_pub_key,
         descriptor.expansion,
         descriptor.provider,
+        lambda: descriptor.satisfy({}),
     ):
         with pytest.raises(BTClibValueError, match="exceeds size limit"):
             question()
