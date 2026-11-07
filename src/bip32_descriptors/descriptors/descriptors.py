@@ -191,6 +191,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _parse_key,
     _read_multipath_keys,
     _read_split,
+    _split_arguments,
     _split_function,
     _split_unpaired_arguments,
     _steps_compared,
@@ -2398,14 +2399,15 @@ def _one_argument(arguments: list[str], name: str) -> str:
     return arguments[0]
 
 
-def _parse_multi_a(name: str, args: list[str], prv_keys: dict[str, str]) -> MultiA:
+def _parse_multi_a(name: str, text: str, prv_keys: dict[str, str]) -> MultiA:
     """Return the leaf of a BIP387 ``multi_a()`` or ``sortedmulti_a()``.
 
-    The keys are read as a ``pk()`` leaf's key is, which is what allows
-    BIP387's own vectors to name one by its WIF and the next by an xprv:
-    x-only is the spelling a tapscript holds and not the only spelling a
-    KEY expression has.
+    `text` is what the parentheses enclose. The keys are read as a
+    ``pk()`` leaf's key is, which is what allows BIP387's own vectors to
+    name one by its WIF and the next by an xprv: x-only is the spelling a
+    tapscript holds and not the only spelling a KEY expression has.
     """
+    args = _split_unpaired_arguments(text)
     if len(args) < 2:
         raise BTClibValueError(f"{name}() takes a threshold and at least one key")
     if not _THRESHOLD.fullmatch(args[0]):
@@ -2416,6 +2418,7 @@ def _parse_multi_a(name: str, args: list[str], prv_keys: dict[str, str]) -> Mult
             key, prv_keys, x_only=True, compressed=True, musig_allowed=True
         ),
     )
+    _assert_multisig_end(name, text, args)
     threshold = _int_from_digits(args[0], f"{name}() threshold")
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
@@ -2423,6 +2426,29 @@ def _parse_multi_a(name: str, args: list[str], prv_keys: dict[str, str]) -> Mult
         raise BTClibValueError(f"invalid n in k-of-n {name}: {len(keys)}")
     _assert_multipath_keys(lengths)
     return MultiA(threshold, keys, sort=name == "sortedmulti_a")
+
+
+def _assert_multisig_end(name: str, text: str, args: list[str]) -> None:
+    """Refuse the text a multisig's arguments leave, once its keys are read.
+
+    `args` is `text` split as Bitcoin Core reads a multisig: each argument
+    ends at a "," or at a closing bracket with nothing open. Core expects
+    a "," after each key, so a closing bracket left after one is the
+    multisig's fault, which Core names before it checks the number of
+    keys or the threshold. The message leaves the text out, since it can
+    hold a private key.
+
+    Past that bracket the multisig's own parentheses are closed. A "," or
+    a closing bracket there, with nothing open, is where Core's caller
+    ends the expression, so Core never reads the rest as the multisig's:
+    that text is refused as unpaired brackets.
+    """
+    end = len(",".join(args))
+    rest = text[end + 1 :]
+    if end < len(text) and _split_unpaired_arguments(rest) == [rest]:
+        err_msg = f"{name}(): expected ',' after a key, got a closing bracket"
+        raise BTClibValueError(err_msg)
+    _split_arguments(text)
 
 
 def _parse_leaf_miniscript(expression: str, prv_keys: dict[str, str]) -> Miniscript:
@@ -2462,10 +2488,7 @@ def _parse_leaf(expression: str, prv_keys: dict[str, str]) -> DescriptorLeaf | R
         return _parse_leaf_miniscript(expression, prv_keys)
     name = expression.partition("(")[0]
     if name in _TREE_FUNCTIONS:
-        return _read_split(
-            _split_function(expression)[1],
-            lambda args: _parse_multi_a(name, args, prv_keys),
-        )
+        return _parse_multi_a(name, _split_function(expression)[1], prv_keys)
     return _parse_other_leaf(expression, name, prv_keys)
 
 
@@ -2656,11 +2679,13 @@ def _parse_wsh(
 
 def _parse_multi(
     name: str,
-    args: list[str],
+    text: str,
     context: str,
     network: str,
     prv_keys: dict[str, str],
 ) -> Descriptor:
+    """Return the multisig `name` names, `text` what its parentheses enclose."""
+    args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
         raise BTClibValueError(f"{name}() takes a threshold and at least one key")
@@ -2674,6 +2699,7 @@ def _parse_multi(
             musig_allowed=False,
         ),
     )
+    _assert_multisig_end(name, text, args)
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
     _assert_multi_size(name, keys, context)
@@ -2728,13 +2754,13 @@ def _assert_multi_size(
 def _parse_ordered_multi(
     args: list[str], context: str, network: str, prv_keys: dict[str, str]
 ) -> Descriptor:
-    return _parse_multi("multi", args, context, network, prv_keys)
+    return _parse_multi("multi", args[0], context, network, prv_keys)
 
 
 def _parse_sorted_multi(
     args: list[str], context: str, network: str, prv_keys: dict[str, str]
 ) -> Descriptor:
-    return _parse_multi("sortedmulti", args, context, network, prv_keys)
+    return _parse_multi("sortedmulti", args[0], context, network, prv_keys)
 
 
 def _parse_tr(
@@ -2896,8 +2922,11 @@ _RAW_TREE_PARSERS: dict[str, Callable[[list[str]], RawLeaf | RawNode]] = {
 
 # the functions whose one argument Core reads whole, a key or a script,
 # "," and brackets included, so that a fault inside it is that argument's;
-# and tr(), whose key and tree Core cuts from the text itself
-_WHOLE_ARGUMENT_FUNCTIONS = frozenset({"pk", "pkh", "wpkh", "combo", "sh", "wsh", "tr"})
+# and tr(), multi() and sortedmulti(), whose arguments Core cuts from the
+# text itself
+_WHOLE_ARGUMENT_FUNCTIONS = frozenset(
+    {"pk", "pkh", "wpkh", "combo", "sh", "wsh", "tr", "multi", "sortedmulti"}
+)
 
 # every SCRIPT function, where BIP381 to BIP386 allow it, and what
 # reads it. A table rather than a chain of comparisons because the
