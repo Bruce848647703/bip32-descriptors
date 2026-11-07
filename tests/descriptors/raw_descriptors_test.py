@@ -451,10 +451,33 @@ def test_an_empty_raw_is_refused_as_core_refuses_it() -> None:
         parse("raw()")
 
 
-@pytest.mark.parametrize("script", ["0", "zz", "0g", "0x00", "00 11", " 00"])
+@pytest.mark.parametrize("script", ["0", "zz", "0g", "0x00", "00 11", " 00", "00 "])
 def test_raw_takes_whole_bytes_of_hex_only(script: str) -> None:
     """Refuse what Core's `IsHex` refuses."""
     with pytest.raises(BTClibValueError, match="^Raw script is not hex$"):
+        parse(f"raw({script})")
+
+
+@pytest.mark.parametrize(
+    "script, message",
+    [
+        ("\t00", r"^invalid descriptor character: '\\t'$"),
+        ("00\t11", r"^invalid descriptor character: '\\t'$"),
+        ("00\t", r"^invalid descriptor character: '\\t'$"),
+        ("\n00", r"^invalid descriptor character: '\\n'$"),
+        ("00\n11", r"^invalid descriptor character: '\\n'$"),
+        ("00\n", r"^invalid descriptor character: '\\n'$"),
+    ],
+)
+def test_raw_refuses_a_tab_or_a_newline_before_reading_its_hex(
+    script: str, message: str
+) -> None:
+    """Refuse a tab or a newline as outside `INPUT_CHARSET`.
+
+    `strip_checksum` refuses them, before ``raw()`` is read. Core refuses
+    them at the same step, its checksum, as "Invalid characters in payload".
+    """
+    with pytest.raises(BTClibValueError, match=message):
         parse(f"raw({script})")
 
 
