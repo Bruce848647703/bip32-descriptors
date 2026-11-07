@@ -356,8 +356,10 @@ extend-ignore-re = ['`[^`]*`']
 
 [tool.coverage.run]
 # what the ratchet measures, named here rather than on the command line:
-# unnamed, `--cov` measures every file the run imports, btclib included
-source = ["bip32_descriptors", "tests"]
+# unnamed, `--cov` measures every file the run imports, btclib included.
+# .github/scripts is not an importable package, and coverage measures it
+# by path all the same
+source = ["bip32_descriptors", "tests", ".github/scripts"]
 # tests/integration is omitted because those tests skip themselves without
 # BTCLIB_INTEGRATION or BTCLIB_QA_ASSETS:
 # their bodies would be uncovered lines of tests/ at every ordinary run,
