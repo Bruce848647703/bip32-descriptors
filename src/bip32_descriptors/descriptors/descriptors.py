@@ -188,6 +188,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _derived_once,
     _expression,
     _offered_signature,
+    _one_hardening,
     _parse_key,
     _read_multipath_keys,
     _read_split,
@@ -399,6 +400,9 @@ _THRESHOLD = re.compile(r"[0-9]+")
 # a multipath step. A text that `parse` has read, each step on its first
 # path, holds no "<" or ">" but in one, as a whole element of a key's path
 _MULTIPATH_STEP = re.compile(r"<[^<>]*>")
+# a key with such a step, from the "(" or "," before it to the next one
+# that ends it. A musig() path follows a ")" and is no key's
+_KEY_WITH_STEP = re.compile(r"(?<=[(,])[^(),{}]*<[^<>]*>[^(),{}]*")
 
 
 def _multipath_steps(text: str) -> list[tuple[int, int, list[str]]]:
@@ -4012,6 +4016,12 @@ def multipath_descriptors(descriptor: str, network: str | None = None) -> list[s
     them: once it has read a ``multi()``, a ``multi_a()`` or a ``musig()``,
     and at the end of a miniscript or of a ``tr()``.
 
+    Before the expansion, each key with a step has every hardened step
+    written in one symbol, ``h`` or ``'``: the one Bitcoin Core writes all
+    of the key's paths with, chosen from the whole key. One path alone can
+    choose another, and `str` of a result writes the symbol its own path
+    chooses.
+
     The keys are read in `network` as `parse` reads them. With none, the
     network of a key is not checked, which is `parse`'s call to make on the
     result.
@@ -4029,6 +4039,7 @@ def multipath_descriptors(descriptor: str, network: str | None = None) -> list[s
         read(text)
     if not set_aside:
         return [add_checksum(text)]
+    text = _KEY_WITH_STEP.sub(lambda key: _one_hardening(key[0]), text)
     steps = _multipath_steps(text)
     descriptors = []
     # `parse` has refused steps of different length

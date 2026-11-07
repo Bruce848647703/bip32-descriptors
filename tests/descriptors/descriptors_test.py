@@ -1086,12 +1086,12 @@ def test_parse_reads_the_keys_of_a_tr_before_counting_its_arguments() -> None:
         parse(f"tr({xpub},pk({xpub}),{xpub})")
 
 
-def test_multipath_keeps_the_text_of_the_items_it_expands() -> None:
-    """Write back each item as it was written, ``'`` and ``h`` included."""
+def test_multipath_writes_the_items_of_a_key_in_one_symbol() -> None:
+    """Write the items of a step in the symbol of the last hardened one."""
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
     descriptor = f"multi(1,{xpub}/<0h;1'>,{xpub}/<2;3h>)"
     assert [strip_checksum(d) for d in multipath_descriptors(descriptor)] == [
-        f"multi(1,{xpub}/0h,{xpub}/2)",
+        f"multi(1,{xpub}/0',{xpub}/2)",
         f"multi(1,{xpub}/1',{xpub}/3h)",
     ]
 

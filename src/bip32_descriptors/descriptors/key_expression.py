@@ -554,6 +554,35 @@ def _hardening(path: str) -> str:
     return symbols[-1] if symbols else ""
 
 
+# a hardening symbol after a step's index or a wildcard, in a key's origin
+# or path: never in the key itself, which can hold a digit and then an "h"
+_HARDENED_SYMBOL = re.compile(r"(?<=[0-9*])['h](?=[/;>\]]|$)")
+
+
+def _one_hardening(key: str) -> str:
+    """Write every hardened step of a key with a multipath step in one symbol.
+
+    The symbol is the one Bitcoin Core keeps for every path the step
+    expands to: chosen from the whole key as `_parse_key` says, the items
+    of the step read in order. One path alone can choose another, so
+    `multipath_descriptors` writes the key this way before it expands it.
+    `key` is one that `parse` has read, and no ``musig()``.
+    """
+    _, origin_hardening, rest = _origin_and_rest(key)
+    origin = key[: len(key) - len(rest)]
+    xkey, separator, path = rest.partition("/")
+    steps, _, wildcard_hardening = _split_wildcard(path.split("/"))
+    items = [item for step in steps for item in step.strip("<>").split(";")]
+    symbol = (
+        _hardening("/".join(items))
+        or wildcard_hardening
+        or origin_hardening
+        or _HARDENING
+    )
+    origin, path = (_HARDENED_SYMBOL.sub(symbol, text) for text in (origin, path))
+    return origin + xkey + separator + path
+
+
 def _assert_key_item(key: str) -> None:
     """Refuse a key item Core refuses before it reads a path.
 
