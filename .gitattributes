@@ -5,5 +5,6 @@
 # them, so those bytes are the ones on disk on every platform.
 tests/_data/descriptor_checksums.json -text
 tests/_data/miniscript_fixed_tests.json -text
+tests/_data/preimage_descriptors.json -text
 tests/bip32/_data/bip32_invalid_keys.json -text
 tests/bip32/_data/bip32_test_vectors.json -text

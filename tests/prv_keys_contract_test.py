@@ -37,6 +37,7 @@ from bip32_descriptors.descriptors import (
     KeyExpression,
     Miniscript,
     TrDescriptor,
+    private_string,
 )
 from bip32_descriptors.descriptors import normalized as normalized_descriptor
 from bip32_descriptors.descriptors import parse as parse_descriptor
@@ -104,6 +105,7 @@ _ROWS: dict[str, Callable[[], object]] = {
     "Miniscript.insane_sub": _call(_MINISCRIPT.insane_sub),
     "Miniscript.satisfy": _call(_MINISCRIPT.satisfy, None, None, 0, "mainnet"),
     "normalized": _call(normalized_descriptor, _DESCRIPTOR),
+    "private_string": _call(private_string, _DESCRIPTOR),
 }
 
 

@@ -122,6 +122,41 @@ _DERIVED: ContextVar[tuple[PrvKeys | None, dict[Any, Any]] | None] = ContextVar(
     "_DERIVED", default=None
 )
 
+# the `prv_keys` `descriptors.private_string` writes back, None outside it:
+# a context variable, for the reason `_derived_once`'s docstring gives
+_PRINTED_PRV_KEYS: ContextVar[PrvKeys | None] = ContextVar(
+    "_PRINTED_PRV_KEYS", default=None
+)
+
+
+def _printed_xkey(xkey: str) -> str:
+    """Return the extended key `KeyExpression.__str__` writes.
+
+    `xkey` itself, or inside `descriptors.private_string` the xprv its
+    `prv_keys` file under it. An entry that is no xprv of `xkey` is
+    refused, quoting none of it, since the text written would not be this
+    descriptor's. So is one padded with whitespace, which btclib strips
+    before it compares and `parse` refuses.
+    """
+    prv_keys = _PRINTED_PRV_KEYS.get()
+    xprv = prv_keys.get(xkey) if prv_keys else None
+    if xprv is None:
+        return xkey
+    if not isinstance(xprv, str):
+        err_msg = f"invalid prv_keys entry type: {type(xprv).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    if xprv.strip() != xprv:
+        raise BTClibValueError("invalid prv_keys entry: whitespace around it")
+    # compared outside the handler, so that the refusal chains no error
+    # of btclib's, which may quote the entry
+    try:
+        xpub = xpub_from_xprv(xprv)
+    except (TypeError, ValueError):
+        xpub = None
+    if xpub != xkey:
+        raise BTClibValueError("invalid prv_keys entry: no xprv of its xpub")
+    return xprv
+
 
 @contextmanager
 def _derived_once(prv_keys: PrvKeys | None) -> Iterator[None]:
@@ -382,7 +417,9 @@ class KeyExpression:
         to, and a WIF is the hex of the public key it was reduced to.
         Bitcoin Core writes the same, `ToString` having only the public
         key to write and `ToPrivateString` taking the private material
-        back from the caller.
+        back from the caller. `descriptors.private_string` is the second
+        one: inside it, this writes the xprv its `prv_keys` file under the
+        xpub.
 
         An x-only key is written as the 32 bytes a ``tr()`` holds, which
         is the spelling it was read in and the only one allowed there.
@@ -406,7 +443,7 @@ class KeyExpression:
             text = f"[{path}]"
         if self.pub_key is not None:
             return text + (self.pub_key[1:] if self.x_only else self.pub_key).hex()
-        text += self.xkey
+        text += _printed_xkey(self.xkey)
         for index in self.der_path:
             text += "/" + str_from_index_int(index, self.hardening)
         if self.wildcard is not None:

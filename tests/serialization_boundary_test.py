@@ -128,8 +128,16 @@ _MODULE_READER_IDS = tuple(label for label, _, _ in _MODULE_READERS)
 # what those two take besides the text they convert, each driven by a
 # test of its own below
 _MODULE_EXTRA_ARGUMENTS = {
-    ("bip32_descriptors.descriptors.descriptors", "parse"): ["network", "prv_keys"],
-    ("bip32_descriptors.descriptors.miniscript", "parse"): ["context", "prv_keys"],
+    ("bip32_descriptors.descriptors.descriptors", "parse"): [
+        "network",
+        "prv_keys",
+        "preimages",
+    ],
+    ("bip32_descriptors.descriptors.miniscript", "parse"): [
+        "context",
+        "prv_keys",
+        "preimages",
+    ],
 }
 
 
@@ -247,12 +255,15 @@ def test_a_descriptor_is_parsed_for_a_network_that_exists() -> None:
     that was wrong; `prv_keys` was walked with `in` and `[]`, so a list
     of pairs answered "not found" for every key rather than saying it is
     not a mapping. `None` is a type it declares, so it is asserted to
-    work rather than driven -- a statement about the signature.
+    work rather than driven -- a statement about the signature. The same
+    holds for `preimages`.
     """
     descriptor = f"pk({PrvKeyData(1).pub.sec.hex()})"
     assert descriptors.parse(descriptor, "testnet").network == "testnet"
     assert descriptors.parse(descriptor, prv_keys={}).network == "mainnet"
     assert descriptors.parse(descriptor, prv_keys=None).network == "mainnet"
+    assert descriptors.parse(descriptor, preimages={}).network == "mainnet"
+    assert descriptors.parse(descriptor, preimages=None).network == "mainnet"
     # and normalized, which is what going through the library's own
     # question buys beyond refusing what is not one
     assert descriptors.parse(descriptor, " TestNet ").network == "testnet"
@@ -263,6 +274,8 @@ def test_a_descriptor_is_parsed_for_a_network_that_exists() -> None:
     for wrong in _NOT_NONE:
         with pytest.raises(BTClibTypeError, match="invalid prv_keys type"):
             descriptors.parse(descriptor, prv_keys=wrong)
+        with pytest.raises(BTClibTypeError, match="invalid preimages type"):
+            descriptors.parse(descriptor, preimages=wrong)
     with pytest.raises(BTClibValueError, match="unknown network"):
         descriptors.parse(descriptor, "mainet")
 
@@ -278,6 +291,7 @@ def test_a_miniscript_is_parsed_in_a_context_that_exists() -> None:
     for context in (miniscript.P2WSH, miniscript.TAPSCRIPT):
         assert miniscript.parse(expression, context).context == context
     assert miniscript.parse(expression, prv_keys=None).context == miniscript.P2WSH
+    assert miniscript.parse(expression, preimages=None).context == miniscript.P2WSH
 
     for wrong in _WRONG_TYPES:
         with pytest.raises(BTClibTypeError, match="invalid context type"):
@@ -285,6 +299,8 @@ def test_a_miniscript_is_parsed_in_a_context_that_exists() -> None:
     for wrong in _NOT_NONE:
         with pytest.raises(BTClibTypeError, match="invalid prv_keys type"):
             miniscript.parse(expression, prv_keys=wrong)
+        with pytest.raises(BTClibTypeError, match="invalid preimages type"):
+            miniscript.parse(expression, preimages=wrong)
     with pytest.raises(BTClibValueError, match="unknown spend context"):
         miniscript.parse(expression, "P2SH")
 

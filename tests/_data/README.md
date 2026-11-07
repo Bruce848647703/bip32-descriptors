@@ -32,6 +32,8 @@ file whose name they could take:
 - `descriptor_checksums.json` is composed from prose, and
   `miniscript_fixed_tests.json` is transcribed from C++ source: no upstream
   file for either, so no upstream name to take.
+- `preimage_descriptors.json` is composed here, for a syntax no BIP
+  specifies yet.
 
 ## Reading an entry
 
@@ -665,6 +667,108 @@ Not vendored as a file because the strings are literals in Scala source.
 bitcoin-s is under the MIT licence (its `LICENSE`), the licence of this
 package.
 
+## Delving Bitcoin
+
+### `tests/_data/preimage_descriptors.json`
+
+```text
+topic     https://delvingbitcoin.org/t/descriptor-syntax-for-hash-preimages/2935
+computed  2026-11-07
+ours      5ef2141dadb30525744f20a8d036878a1b14aff5
+```
+
+Verdict: **composed locally**. The topic proposes ``preimage(HEX)`` as the
+private form of a hash fragment's argument. No BIP specifies it, so these
+vectors are this package's, for issue btclib-org/bip32-descriptors#11.
+Each row is one hash fragment in `wsh(and_v(v:pk(KEY),FRAGMENT(ARG)))`,
+where ARG is the digest in the public form and ``preimage(HEX)`` in the
+private one. KEY is the generator point in the unranged rows, and a ranged
+derivation of the master xpub of BIP32's first test vector in the ranged
+ones.
+
+No code of this package or of btclib checks them: `hashlib` checks the
+digests, BIP380's reference Python the checksums of both forms, and
+Bitcoin Core, on a node of its own with no chain, wallet or peers, the
+public forms, their checksums and their scriptPubKeys. Core refuses the
+private forms, so BIP380's code is the one check of their checksums made
+outside this package. From the repository root, the command prints the
+rows any of these checks disagrees with; it prints an empty list.
+
+```shell
+datadir=$(mktemp -d)
+bip380=$(mktemp)
+pin=55916fd835fae2c57d2afedcc2ebea698e760361
+gh api -H 'Accept: application/vnd.github.raw' \
+    "repos/bitcoin/bips/contents/bip-0380.mediawiki?ref=${pin:?}" > "$bip380"
+bitcoind -datadir="$datadir" -rpcport=18999 -disablewallet -connect=0 \
+    -listen=0 -dnsseed=0 -daemonwait
+uv run --no-project python - "$datadir" "$bip380" <<'PY'
+import hashlib
+import json
+import re
+import subprocess
+import sys
+
+text = open(sys.argv[2], encoding="utf-8").read()
+reference = {}
+for block in re.findall(r"<pre>\n(.*?)</pre>", text, re.S):
+    if "descsum" in block:
+        exec(block, reference)
+
+
+def cli(*args):
+    done = subprocess.run(
+        ["bitcoin-cli", f"-datadir={sys.argv[1]}", "-rpcport=18999", *args],
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(done.stdout) if done.returncode == 0 else None
+
+
+def sha256(b):
+    return hashlib.sha256(b).digest()
+
+
+def ripemd160(b):
+    return hashlib.new("ripemd160", b).digest()
+
+
+hashes = {
+    "sha256": sha256,
+    "hash256": lambda b: sha256(sha256(b)),
+    "ripemd160": ripemd160,
+    "hash160": lambda b: ripemd160(sha256(b)),
+}
+wrong = []
+with open("tests/_data/preimage_descriptors.json", encoding="ascii") as f:
+    rows = json.load(f)
+for row in rows:
+    preimage = bytes.fromhex(row["preimage"])
+    public, private = row["public"], row["private"]
+    count = len(row["script_pub_keys"])
+    addresses = cli("deriveaddresses", public, *(["[0,2]"] if count > 1 else []))
+    scripts = [cli("validateaddress", a)["scriptPubKey"] for a in addresses or []]
+    ok = hashes[row["fragment"]](preimage).hex() == row["digest"]
+    ok &= private == public.split("#")[0].replace(
+        row["digest"], f"preimage({row['preimage']})"
+    ) + "#" + private.split("#")[1]
+    ok &= all(map(reference["descsum_check"], (public, private)))
+    ok &= (cli("getdescriptorinfo", public) or {}).get("checksum") == public[-8:]
+    ok &= scripts == row["script_pub_keys"]
+    ok &= cli("getdescriptorinfo", private.split("#")[0]) is None
+    wrong += [] if ok else [public]
+print(wrong)
+PY
+bitcoin-cli -datadir="$datadir" -rpcport=18999 stop
+while [ -e "$datadir/bitcoind.pid" ]; do sleep 1; done
+rm -r "${datadir:?}" "${bip380:?}"
+```
+
+`tests/descriptors/preimage_test.py` reads the file. The `ours` line
+records its blob, and neither the weekly job nor the suite compares the
+file with it: `check_vendored_vectors.py` reads only an entry that names
+a repository, a path and a commit, and this one has none to name.
+
 ## What is not pinned, and why
 
 - **The transcribed files** are pinned to a prose revision, or, where the
@@ -697,6 +801,8 @@ Not checked byte for byte against an upstream blob:
   source file, by the check the entry itself states:
   `bip32_test_vectors.json`, `bip32_invalid_keys.json`,
   `miniscript_fixed_tests.json`.
+- composed here: `preimage_descriptors.json`, for a syntax no BIP
+  specifies, its public forms checked against Bitcoin Core.
 - not vendored: `descriptor_checksums.json`, composed rather than
   recorded: its checksums come from a third implementation run over
   Core's own descriptors.

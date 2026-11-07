@@ -89,6 +89,11 @@ optional `prv_keys`. A WIF is not in that mapping: it was already reduced
 to its public key on the way in, this module deriving nothing from it and
 signing nothing with it.
 
+Nor does a parsed descriptor hold a hash preimage. A hash fragment's
+``preimage(HEX)`` is read to the digest the node keeps, and the preimage
+goes back through the `preimages` mapping a caller passes in, keyed by
+that digest. The `miniscript` module docstring says what that syntax is.
+
 The network is a parameter of `parse` and not part of a descriptor: a
 descriptor names keys and scripts, and the same one means something on
 any chain, which is why Bitcoin Core takes the chain from its own context
@@ -99,7 +104,9 @@ own prefix.
 checksum. `add_checksum(str(descriptor))` is the checksummed form: Core's
 `ToString`, `ToStringHelper` writing none, and HWI's and Electrum's
 `to_string`. What it writes is public by construction, there being no
-private material left in a parsed descriptor to write.
+private material left in a parsed descriptor to write. `private_string`
+is Core's `ToPrivateString`: it takes the two mappings back and writes
+the xprv and ``preimage(HEX)`` spellings, as its docstring says.
 
 `infer_descriptor` goes back from a script instead: Bitcoin Core's
 `InferDescriptor`, reading the script and what a `Provider` knows of its
@@ -119,9 +126,9 @@ What this module exports is the checksum functions, `parse` and
 made of -- `DescriptorTree` and the `MultiA`, `RawLeaf` and `RawNode` a
 tree may hold among them, all being names a caller reads off
 `TrDescriptor.tree`.
-`KeyExpression` and `PrvKeys` are `key_expression`'s and the `Miniscript`
-a `MiniscriptDescriptor` holds is `miniscript`'s; the package `__init__`
-re-exports the first two, being what a caller reads off
+`KeyExpression` and `PrvKeys` are `key_expression`'s, and `Preimages` and
+the `Miniscript` a `MiniscriptDescriptor` holds are `miniscript`'s; the
+package `__init__` re-exports them, being what a caller reads off
 `Descriptor.key_expressions` and annotates a mapping with.
 `INPUT_CHARSET`, `CHECKSUM_CHARSET` and `GENERATOR` stay out: they are the
 three tables BIP380's checksum is computed from, which is what `checksum`,
@@ -133,7 +140,9 @@ from __future__ import annotations
 import operator
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, replace
 from typing import Any, cast
 
@@ -178,6 +187,7 @@ from bip32_descriptors.bip32.der_path import (
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
 from bip32_descriptors.descriptors import miniscript
 from bip32_descriptors.descriptors.key_expression import (
+    _PRINTED_PRV_KEYS,
     KeyExpression,
     PrvKeys,
     _assert_index_range,
@@ -200,7 +210,9 @@ from bip32_descriptors.descriptors.key_expression import (
 )
 from bip32_descriptors.descriptors.miniscript import (
     _HEX,
+    _PRINTED_PREIMAGES,
     Miniscript,
+    Preimages,
     SpendContext,
     _assert_sane,
     _has_raw_key_hash,
@@ -244,6 +256,7 @@ __all__ = [
     "multipath_descriptors",
     "normalized",
     "parse",
+    "private_string",
     "strip_checksum",
     "wallet_policy",
     "wallet_policy_address",
@@ -1093,7 +1106,8 @@ class Descriptor(ABC):
         Public by construction, `parse` having kept no private material
         to write: the same guarantee Bitcoin Core's `ToString` gives by
         holding only a neutered key, where its `ToPrivateString` has to
-        be handed the keys back.
+        be handed the keys back. `private_string` is that one, and is the
+        one place this writes a private spelling.
 
         Without the checksum because a fragment inside another one is
         written by this very method, and a checksum there would be part
@@ -2548,7 +2562,9 @@ def _parse_leaf_miniscript(expression: str, prv_keys: dict[str, str]) -> Miniscr
         _read_unclosed_multisig_keys(expression, miniscript.TAPSCRIPT, prv_keys)
     with _steps_compared():
         try:
-            node = _parse_miniscript(expression, miniscript.TAPSCRIPT, prv_keys)
+            node = _parse_miniscript(
+                expression, miniscript.TAPSCRIPT, prv_keys, _filed_preimages()
+            )
         except miniscript._CoreFallbackError as error:
             err_msg = "tr() leaf is not a valid descriptor function"
             raise BTClibValueError(err_msg) from error
@@ -3049,7 +3065,9 @@ def _parse_miniscript_expression(
             expression, _MINISCRIPT_CONTEXTS[context], prv_keys
         )
     with _steps_compared():
-        node = _parse_miniscript(expression, _MINISCRIPT_CONTEXTS[context], prv_keys)
+        node = _parse_miniscript(
+            expression, _MINISCRIPT_CONTEXTS[context], prv_keys, _filed_preimages()
+        )
         _assert_sane(node, prv_keys)
     return MiniscriptDescriptor(node, network=network)
 
@@ -3082,7 +3100,9 @@ def _parse_no_function(
     if expression.startswith("multi_a("):
         _read_unclosed_multisig_keys(expression, miniscript.TAPSCRIPT, prv_keys)
     try:
-        _parse_miniscript(expression, miniscript.TAPSCRIPT, prv_keys)
+        _parse_miniscript(
+            expression, miniscript.TAPSCRIPT, prv_keys, _filed_preimages()
+        )
     except miniscript._CoreFallbackError as error:
         raise BTClibValueError(_NOT_A_FUNCTION[context]) from error
     raise BTClibValueError("Miniscript expressions can only be used in wsh or tr.")
@@ -3130,10 +3150,26 @@ def _parse_expression(
     return _read_split(arguments, lambda args: parser(args, context, network, prv_keys))
 
 
+# the `preimages` the `parse` in progress files a ``preimage(HEX)`` in, None
+# outside one. A context variable, as `key_expression._SET_ASIDE` is, rather
+# than a parameter every SCRIPT expression's reader would have to carry for
+# the readers of a miniscript among them
+_PREIMAGES: ContextVar[dict[bytes, bytes] | None] = ContextVar(
+    "_PREIMAGES", default=None
+)
+
+
+def _filed_preimages() -> dict[bytes, bytes]:
+    """Return the mapping the `parse` in progress files a preimage in."""
+    preimages = _PREIMAGES.get()
+    return {} if preimages is None else preimages
+
+
 def parse(
     descriptor: str,
     network: str = "mainnet",
     prv_keys: dict[str, str] | None = None,
+    preimages: dict[bytes, bytes] | None = None,
 ) -> Descriptor:
     """Return the Descriptor of a descriptor string, checksum verified.
 
@@ -3159,12 +3195,22 @@ def parse(
     is asked for with it, that being the other type the annotation
     declares -- and one call rather than a branch, which is what keeps
     the two spellings of "a declared type" in one place.
+
+    `preimages` is where a hash fragment's ``preimage(HEX)`` is filed,
+    under its digest, as the module docstring says; it is checked the same
+    way. What either mapping was filed with stays in it where the
+    descriptor is then refused.
     """
     assert_type(descriptor, str, "descriptor")
     network = validated_network_name(network)
     assert_type(prv_keys, (Mapping, type(None)), "prv_keys")
+    assert_type(preimages, (Mapping, type(None)), "preimages")
 
-    parsed = _parse_text(strip_checksum(descriptor), network, prv_keys)
+    token = _PREIMAGES.set({} if preimages is None else preimages)
+    try:
+        parsed = _parse_text(strip_checksum(descriptor), network, prv_keys)
+    finally:
+        _PREIMAGES.reset(token)
     for key in parsed.key_expressions:
         _assert_network(key, network)
     return parsed
@@ -3320,6 +3366,48 @@ def normalized(descriptor: Descriptor, prv_keys: PrvKeys | None = None) -> Descr
     """
     _assert_prv_keys(prv_keys)
     return _mapped_keys(descriptor, lambda key: _normalized_key(key, prv_keys))
+
+
+@contextmanager
+def _private_spellings(
+    prv_keys: PrvKeys | None, preimages: Preimages | None
+) -> Iterator[None]:
+    """Have `str` write the private spellings the two mappings hold."""
+    keys_token = _PRINTED_PRV_KEYS.set(prv_keys)
+    preimages_token = _PRINTED_PREIMAGES.set(preimages)
+    try:
+        yield
+    finally:
+        _PRINTED_PREIMAGES.reset(preimages_token)
+        _PRINTED_PRV_KEYS.reset(keys_token)
+
+
+def private_string(
+    descriptor: Descriptor,
+    prv_keys: PrvKeys | None = None,
+    preimages: Preimages | None = None,
+) -> str:
+    """Return the descriptor as text, with its private spellings written back.
+
+    Bitcoin Core's `ToPrivateString`, the private twin of `str`: an xpub
+    that `prv_keys` names is written as the xprv filed under it, and a
+    hash fragment as ``preimage(HEX)`` where `preimages` holds, under its
+    digest, a preimage that fragment's hash takes to it. The two mappings
+    are what `parse` hands back. What neither names is written as `str`
+    writes it. An entry that is no xprv of its xpub is refused, and so is
+    a preimage that is no 32 bytes.
+
+    A WIF is written as its public key, as `str` writes it: `parse` files
+    no WIF in `prv_keys`. ``preimage(HEX)`` is no BIP's syntax, as the
+    `miniscript` module docstring says.
+
+    Without the checksum, as `str`: `add_checksum` adds it.
+    """
+    assert_type(descriptor, Descriptor, "descriptor")
+    _assert_prv_keys(prv_keys)
+    assert_type(preimages, (Mapping, type(None)), "preimages")
+    with _private_spellings(prv_keys, preimages):
+        return str(descriptor)
 
 
 def at_index(descriptor: Descriptor, index: int = 0) -> Descriptor:

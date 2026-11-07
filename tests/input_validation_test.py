@@ -253,6 +253,7 @@ def test_the_vocabulary_is_the_libraries_input_types() -> None:
         # behind a default wherever a public parameter takes it, and a
         # parameter with a default is never driven
         "PrvKeys",
+        "Preimages",
     }
     covered = (in_alias_py | own) & annotated
     assert covered <= set(_WRONG_TYPE) | without_a_wrong_value

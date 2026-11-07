@@ -55,6 +55,16 @@ resources. The context is therefore a parameter of everything, and
 `descriptors` passes the one the position gives: `P2WSH` inside ``wsh()``,
 `TAPSCRIPT` for a leaf of a ``tr()`` script tree.
 
+A hash fragment also reads ``preimage(HEX)`` in place of its digest, as
+in ``sha256(preimage(HEX))``: the private form, as a WIF or an xprv is a
+key's. No BIP specifies it and Bitcoin Core does not read it. It is
+proposed on Delving Bitcoin, in "Descriptor syntax for hash preimages"
+(https://delvingbitcoin.org/t/descriptor-syntax-for-hash-preimages/2935),
+and the syntax may change. `parse` keeps the digest in the node and hands
+the preimage back through the `preimages` mapping a caller passes in, as
+`descriptors.parse` hands an xprv back through `prv_keys`, so `str` writes
+the digest. `descriptors.private_string` writes ``preimage(HEX)`` back.
+
 Above `key_expression`, whose KEY expressions the fragments hold, and
 below `descriptors`, which reads a miniscript wherever a SCRIPT
 expression may be one. This module imports the first and not the second.
@@ -66,12 +76,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import SupportsIndex, TypeVar
 
 from btclib.alias import Octets, ScriptList
 from btclib.exceptions import BTClibValueError
-from btclib.hashes import hash160
+from btclib.hashes import hash160, hash256, ripemd160, sha256
 from btclib.network import network_from_xkeyversion
 from btclib.script.limits import (
     MAX_OPS_PER_SCRIPT,
@@ -109,6 +120,7 @@ __all__ = [
     "P2WSH",
     "TAPSCRIPT",
     "Miniscript",
+    "Preimages",
     "SpendContext",
     "from_script",
     "parse",
@@ -201,6 +213,28 @@ _DATA_SIZE = {
     # the hash160 of the key a raw_pk_h() holds in place of the key
     "raw_pk_h": 20,
 }
+# and the function each hash fragment commits with, which is what turns a
+# ``preimage(HEX)`` into the digest the node holds
+_HASH_FUNCTIONS: dict[str, Callable[[bytes], bytes]] = {
+    "sha256": sha256,
+    "hash256": hash256,
+    "ripemd160": ripemd160,
+    "hash160": hash160,
+}
+# BIP379 satisfies a hash fragment with a preimage of 32 bytes and no other
+_PREIMAGE_SIZE = 32
+
+# what `parse` hands back beside the expression, as `prv_keys` is: the
+# preimage each ``preimage(HEX)`` was read with, filed under the digest the
+# node keeps. Digest to preimage, as `SpendContext`'s preimage mappings
+# are keyed
+Preimages = Mapping[bytes, bytes]
+
+# the preimages `descriptors.private_string` writes back, None outside it:
+# a context variable, as `key_expression._PRINTED_PRV_KEYS` is
+_PRINTED_PREIMAGES: ContextVar[Preimages | None] = ContextVar(
+    "_PRINTED_PREIMAGES", default=None
+)
 
 # how many subexpressions each fragment takes. thresh() is not here: it
 # takes one or more, which its threshold then bounds
@@ -1836,7 +1870,7 @@ def _plain_text(  # sourcery skip: lift-return-into-if
     elif fragment in {"older", "after"}:
         text = f"{fragment}({node.threshold})"
     elif fragment in _HASH_OP_CODES:
-        text = f"{fragment}({node.data.hex()})"
+        text = f"{fragment}({_hash_argument(node)})"
     elif fragment in {"multi", "multi_a"}:
         keys = ",".join(str(key) for key in node.keys)
         text = f"{fragment}({node.threshold},{keys})"
@@ -1845,6 +1879,30 @@ def _plain_text(  # sourcery skip: lift-return-into-if
     else:
         text = f"{fragment}({','.join(subs)})"
     return text
+
+
+def _hash_argument(node: Miniscript) -> str:
+    """Return the argument a hash fragment is written with.
+
+    Its digest, or ``preimage(HEX)`` inside `descriptors.private_string`
+    where the preimages it was handed hold, under the digest, a preimage
+    that this fragment's own hash takes to it. One keyed by digest serves
+    every fragment: a ``sha256()`` preimage filed under its digest is no
+    preimage of a ``hash256()`` holding the same bytes, and that fragment
+    is written with its digest. An entry that is no 32 bytes is refused,
+    quoting none of it.
+    """
+    preimages = _PRINTED_PREIMAGES.get()
+    preimage = preimages.get(node.data) if preimages else None
+    if preimage is None:
+        return node.data.hex()
+    assert_type(preimage, bytes, "preimage")
+    if len(preimage) != _PREIMAGE_SIZE:
+        err_msg = f"invalid {node.fragment}() preimage: {_PREIMAGE_SIZE} bytes expected"
+        raise BTClibValueError(err_msg)
+    if _HASH_FUNCTIONS[node.fragment](preimage) != node.data:
+        return node.data.hex()
+    return f"preimage({preimage.hex()})"
 
 
 def _key_identity(key: KeyExpression, prv_keys: PrvKeys | None) -> object:
@@ -2328,11 +2386,34 @@ def _read_number(name: str, argument: str) -> int:
         raise _CoreFallbackError(str(error)) from error
 
 
+def _read_preimage(
+    name: str, text: str, context: str, preimages: dict[bytes, bytes]
+) -> Miniscript:
+    """Return the node of a hash fragment read from ``preimage(HEX)``.
+
+    `text` is what the parentheses of ``preimage()`` enclose. The node
+    holds the digest, and the preimage goes to the caller's `preimages`
+    under it. The hex is read as a digest's is, whole bytes and no
+    whitespace, and is of the one size BIP379 satisfies a hash fragment
+    with. The refusals quote none of it: a preimage is a secret.
+    """
+    if not _HEX.fullmatch(text):
+        raise BTClibValueError(f"invalid {name}() preimage: hex expected")
+    if len(text) != 2 * _PREIMAGE_SIZE:
+        err_msg = f"invalid {name}() preimage: {_PREIMAGE_SIZE} bytes expected"
+        raise BTClibValueError(err_msg)
+    preimage = bytes.fromhex(text)
+    digest = _HASH_FUNCTIONS[name](preimage)
+    preimages[digest] = preimage
+    return Miniscript(name, context, data=digest)
+
+
 def _read_leaf(
     name: str,
     argument: str,
     context: str,
     prv_keys: dict[str, str],
+    preimages: dict[bytes, bytes],
 ) -> Miniscript:
     """Return the node of a fragment whose arguments are not subexpressions."""
     if name in _KEY_FRAGMENTS:
@@ -2340,6 +2421,9 @@ def _read_leaf(
     if name in _RAW_KEY_FRAGMENTS:
         return _read_raw_key_hash(argument, context)
     if name in _HASH_OP_CODES:
+        if argument.startswith("preimage(") and argument.endswith(")"):
+            text = argument[len("preimage(") : -1]
+            return _read_preimage(name, text, context, preimages)
         if not _HEX.fullmatch(argument):
             raise _CoreFallbackError(f"invalid {name}() hash: hex expected")
         try:
@@ -2379,6 +2463,7 @@ def _read_fragment(
     built: _Built,
     context: str,
     prv_keys: dict[str, str],
+    preimages: dict[bytes, bytes],
 ) -> int:
     """Read one fragment, building it or stacking what its arguments need."""
     name, pos = _read_name(expression, pos)
@@ -2405,7 +2490,9 @@ def _read_fragment(
         return end + 1
     if name not in _LEAVES:
         raise _CoreFallbackError("unknown miniscript fragment")
-    return _read_leaf_fragment(name, expression, pos, built, context, prv_keys)
+    return _read_leaf_fragment(
+        name, expression, pos, built, context, prv_keys, preimages
+    )
 
 
 def _read_leaf_fragment(
@@ -2415,6 +2502,7 @@ def _read_leaf_fragment(
     built: _Built,
     context: str,
     prv_keys: dict[str, str],
+    preimages: dict[bytes, bytes],
 ) -> int:
     """Read a fragment with no subexpression, and build it."""
     own = "multi_a" if context == TAPSCRIPT else "multi"
@@ -2432,7 +2520,11 @@ def _read_leaf_fragment(
             )
         raise _CoreFallbackError(f"unbalanced brackets in {name}()")
     built.append(
-        _assert_fits(_read_leaf(name, expression[pos + 1 : end - 1], context, prv_keys))
+        _assert_fits(
+            _read_leaf(
+                name, expression[pos + 1 : end - 1], context, prv_keys, preimages
+            )
+        )
     )
     return end
 
@@ -2490,6 +2582,7 @@ def parse(
     expression: str,
     context: str = P2WSH,
     prv_keys: dict[str, str] | None = None,
+    preimages: dict[bytes, bytes] | None = None,
 ) -> Miniscript:
     """Return the Miniscript of a BIP379 expression, in its context.
 
@@ -2501,7 +2594,10 @@ def parse(
 
     `prv_keys` is `descriptors.parse`'s: the mapping an extended private
     key is filed in, under the extended public key that replaces it, so
-    that what a parsed expression holds is public.
+    that what a parsed expression holds is public. `preimages` is the
+    same for a hash fragment's ``preimage(HEX)``, filed under its digest,
+    as the module docstring says. What either mapping was filed with stays
+    in it where the expression is then refused.
 
     A `str`, a BIP379 expression being text, and refused as a type for
     the reason `descriptors.parse` gives: what was neither reached the
@@ -2516,9 +2612,12 @@ def parse(
     assert_type(expression, str, "miniscript")
     _assert_valid_context(context)
     assert_type(prv_keys, (Mapping, type(None)), "prv_keys")
+    assert_type(preimages, (Mapping, type(None)), "preimages")
 
     if prv_keys is None:
         prv_keys = {}
+    if preimages is None:
+        preimages = {}
     to_parse: list[tuple[str, int, int]] = [(_WRAPPED_EXPR, 0, 0)]
     built = _Built(context)
     pos = 0
@@ -2527,7 +2626,9 @@ def parse(
         if state == _WRAPPED_EXPR:
             pos = _read_wrappers(expression, pos, to_parse, built, context)
         elif state == _EXPR:
-            pos = _read_fragment(expression, pos, to_parse, built, context, prv_keys)
+            pos = _read_fragment(
+                expression, pos, to_parse, built, context, prv_keys, preimages
+            )
         elif state in {_COMMA, _CLOSE}:
             if expression[pos : pos + 1] != state:
                 raise _CoreFallbackError(f"expected {state!r} in the miniscript")

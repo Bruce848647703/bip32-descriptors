@@ -73,6 +73,8 @@ Python arithmetic answers instead.
 - [BIP379](https://github.com/bitcoin/bips/blob/master/bip-0379.md)
   miniscript: parsing, type checking, the script it compiles to and the
   witness that satisfies it (`descriptors.miniscript`)
+- `sha256(preimage(HEX))`, the private form of the hash fragments, which
+  no BIP specifies (`descriptors.miniscript` says where it is proposed)
 
 [ARCHITECTURE.md](https://github.com/btclib-org/bip32-descriptors/blob/main/ARCHITECTURE.md)
 says how these modules layer and which may import which.
