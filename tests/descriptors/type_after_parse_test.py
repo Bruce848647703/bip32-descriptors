@@ -35,7 +35,7 @@ X, X2, X3 = K[2:], K2[2:], K3[2:]
 _PRV_KEY = 0xC2E58B0C21FC8C9765C9E2B474B2A8A35F59B2588BBF2D258045FD36BB016246
 # of the network parse reads by default
 WIF = wif_from_prv_key(_PRV_KEY, "mainnet")
-_KEY_FAULT = "^invalid key expression$"
+_KEY_FAULT = "^key [0-9]+: invalid key expression$"
 _ILL_TYPED = "^ill-typed miniscript: and_v over Bdekmnosu, Bdekmnosu$"
 
 # and_v() takes a V first: over two B it has no type

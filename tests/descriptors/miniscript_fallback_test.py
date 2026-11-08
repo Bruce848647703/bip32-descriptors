@@ -8,9 +8,10 @@ Issue btclib-org/bip32-descriptors#10. Core is the release
 `integration-bitcoind.yml` pins. Where its miniscript parser fails
 without naming a key, its descriptor reader names its own fallback: "A
 function is needed within P2WSH" inside wsh(), and "'<leaf>' is not a
-valid descriptor function" in a tr() leaf, which parse names without the
-leaf. What Core names for each descriptor here is what getdescriptorinfo
-answered on an offline node.
+valid descriptor function" in a tr() leaf. parse quotes the leaf with
+what its brackets enclose written "...", or names it as "tr() leaf"
+where that is too long. What Core names for each descriptor here is what
+getdescriptorinfo answered on an offline node.
 """
 
 import pytest
@@ -28,7 +29,7 @@ K2 = PrvKeyData(2).pub.sec.hex()
 X, X2 = K[2:], K2[2:]
 # of the network parse reads by default
 WIF = wif_from_prv_key(1, "mainnet")
-_KEY_FAULT = "^invalid key expression$"
+_KEY_FAULT = "^key [0-9]+: invalid key expression$"
 _TOO_LARGE = "and_v(v:sha256(" + "00" * 32 + "),"
 
 # a miniscript Core's parser fails on, written for p2wsh with the key K

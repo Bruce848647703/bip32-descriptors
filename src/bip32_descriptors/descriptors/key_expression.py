@@ -43,6 +43,7 @@ from btclib.utils import assert_type, bytes_from_octets, is_integer
 from ecc.curves import point_from_pub_key, secp256k1
 from ecc.curves.sec_point import bytes_from_point
 from ecc.ecc.musig2 import key_agg_var, key_sort
+from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import (
@@ -1108,21 +1109,26 @@ def _fixed_pub_key(key: str, *, x_only: bool) -> tuple[bytes, bool]:
         raise BTClibValueError("invalid key expression") from e
 
 
-def _assert_network(key: KeyExpression, network: str) -> None:
+def _assert_network(keys: tuple[KeyExpression, ...], network: str) -> None:
     """Refuse a key spelled for another network, as Bitcoin Core's parser does.
 
     A WIF by its version byte and an extended key by its version, against
-    the network's own; the test networks share both. The refusal quotes
-    none of the key.
+    the network's own; the test networks share both. The refusal names the
+    key by its position, counted as `_parse_key` counts it, and quotes none
+    of it.
     """
-    for participant in key.participants:
-        _assert_network(participant, network)
-    if key.wif_prefix and key.wif_prefix != NETWORKS[network].wif:
-        raise BTClibValueError(f"not a {network} key: WIF prefix")
-    if key.xkey and not _PLACEHOLDER.fullmatch(key.xkey):
-        version = BIP32KeyData.b58decode(key.xkey).version
-        if version not in xpubversions_from_network(network):
-            raise BTClibValueError(f"not a {network} key: version 0x{version.hex()}")
+    position = 0
+    for key in keys:
+        for read in (*key.participants, key):
+            if read.wif_prefix and read.wif_prefix != NETWORKS[network].wif:
+                err_msg = f"key {position}: not a {network} key: WIF prefix"
+                raise BTClibValueError(err_msg)
+            if read.xkey and not _PLACEHOLDER.fullmatch(read.xkey):
+                version = BIP32KeyData.b58decode(read.xkey).version
+                if version not in xpubversions_from_network(network):
+                    err_msg = f"not a {network} key: version 0x{version.hex()}"
+                    raise BTClibValueError(f"key {position}: {err_msg}")
+            position += 1
 
 
 _RANGED_PARTICIPANT = "musig() cannot have a ranged participant and derivation too"
@@ -1273,6 +1279,40 @@ def _parse_musig(expression: str, prv_keys: MutableMapping[str, str]) -> KeyExpr
     )
 
 
+@dataclass
+class _KeyCount:
+    """The keys a descriptor has read, and whether one is being read."""
+
+    read: int = 0
+    nested: bool = False
+
+
+# the count of the descriptor being read, None outside one. See `_parse_key`
+_KEY_COUNT: ContextVar[_KeyCount | None] = ContextVar("_KEY_COUNT", default=None)
+
+
+@contextmanager
+def _keys_counted() -> Iterator[None]:
+    """Have a key refused inside named by its position, from 0."""
+    token = _KEY_COUNT.set(_KeyCount())
+    try:
+        yield
+    finally:
+        _KEY_COUNT.reset(token)
+
+
+@contextmanager
+def _keys_read_again() -> Iterator[None]:
+    """Read keys that the reader reads again after, counting them once.
+
+    The count is put back only where the block ends without a refusal.
+    """
+    count = _KEY_COUNT.get() or _KeyCount()
+    read = count.read
+    yield
+    count.read = read
+
+
 def _parse_key(
     expression: str,
     prv_keys: MutableMapping[str, str],
@@ -1302,7 +1342,60 @@ def _parse_key(
     Bitcoin Core's order and where BIP390's "cannot be nested" comes from:
     the expression is a musig one or it is not, so an origin in front of it
     is not a musig expression with an origin -- it is a key that is no key.
+
+    Inside `_keys_counted` a refusal names the key by its position,
+    counted as Bitcoin Core counts its ``key_exp_index``: from 0 in the
+    order the keys are read, a ``musig()`` after its participants. The
+    refusal of a participant names the participant.
     """
+    count = _KEY_COUNT.get()
+    if count is None or count.nested:
+        key = _read_key_on_a_path(
+            expression,
+            prv_keys,
+            x_only=x_only,
+            compressed=compressed,
+            musig_allowed=musig_allowed,
+        )
+    else:
+        count.nested = True
+        try:
+            key = _read_key_on_a_path(
+                expression,
+                prv_keys,
+                x_only=x_only,
+                compressed=compressed,
+                musig_allowed=musig_allowed,
+            )
+        except _MultipathKeyError:
+            raise
+        except BTClibValueError as e:
+            raise BTClibValueError(f"key {count.read}: {e}") from e
+        except EccValueError as e:
+            raise EccValueError(f"key {count.read}: {e}") from e
+        finally:
+            count.nested = False
+    if count is not None:
+        count.read += 1
+    return key
+
+
+def _read_key_on_a_path(
+    expression: str,
+    prv_keys: MutableMapping[str, str],
+    *,
+    x_only: bool,
+    compressed: bool,
+    musig_allowed: bool,
+) -> KeyExpression:
+    """Return the KeyExpression of a KEY expression, read on its first path.
+
+    That is, where `_steps_set_aside` is in force; outside it a step is
+    refused. Read again on its first path, a ``musig()`` counts its
+    participants once.
+    """
+    count = _KEY_COUNT.get() or _KeyCount()
+    read = count.read
     try:
         return _read_key(
             expression,
@@ -1316,6 +1409,7 @@ def _parse_key(
         if steps is None:
             raise
         steps.append(e.length)
+    count.read = read
     return _read_key(
         _first_path(expression),
         prv_keys,

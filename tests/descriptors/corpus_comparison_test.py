@@ -196,7 +196,7 @@ def test_a_multipath_step_with_a_repeated_element_is_refused() -> None:
     """
     with pytest.raises(
         BTClibValueError,
-        match="^Duplicated key path value 1 in multipath specifier$",
+        match="^key 0: Duplicated key path value 1 in multipath specifier$",
     ):
         parse(f"wpkh({XPUB}/<1;1>)")
 

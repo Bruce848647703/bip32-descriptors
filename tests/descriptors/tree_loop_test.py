@@ -18,8 +18,8 @@ _K = PrvKeyData(1).pub.sec.hex()
 _K2 = PrvKeyData(2).pub.sec.hex()
 _X = _K[2:]
 _X2 = _K2[2:]
-_NOT_A_KEY = "^not a key expression$"
-_INVALID_KEY = "^invalid key expression$"
+_NOT_A_KEY = "^key [0-9]+: not a key expression$"
+_INVALID_KEY = "^key [0-9]+: invalid key expression$"
 _UNBALANCED = "^unbalanced braces$"
 
 

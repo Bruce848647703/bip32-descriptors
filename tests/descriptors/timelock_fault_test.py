@@ -67,7 +67,7 @@ def test_a_bad_timelock_in_a_tr_leaf_reports_the_leaf_fallback(
 def test_a_key_fault_before_the_timelock_in_a_tr_leaf_is_preserved() -> None:
     """A leaf's fallback does not hide the key its reader reached first."""
     text = f"tr({_X_ONLY},and_v(v:pk(nope),older(0)))"
-    with pytest.raises(BTClibValueError, match="^invalid key expression$"):
+    with pytest.raises(BTClibValueError, match="^key 1: invalid key expression$"):
         parse(text)
 
 
@@ -87,7 +87,7 @@ def test_a_multipath_key_does_not_expand_a_timelock_argument(fragment: str) -> N
 def test_a_key_fault_before_the_timelock_is_preserved() -> None:
     """A fallback does not hide the key the miniscript reader reached first."""
     text = "wsh(and_v(v:pk(nope),older(<1;2>)))"
-    with pytest.raises(BTClibValueError, match="^invalid key expression$"):
+    with pytest.raises(BTClibValueError, match="^key 0: invalid key expression$"):
         multipath_descriptors(text)
 
 

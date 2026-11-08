@@ -199,7 +199,7 @@ BIP_VECTORS = [
 BIP_INVALID = [
     ("sh(raw(asdf))", "^Raw script is not hex$"),
     (f"tr({XONLY},rawnode(kjke))", "^Rawnode hash is not hex$"),
-    (f"tr(raw(asdf),pk({XONLY}))", "^not a key expression$"),
+    (f"tr(raw(asdf),pk({XONLY}))", "^key 0: not a key expression$"),
 ]
 
 # x-only keys of the private keys 1, 2 and 3
@@ -567,7 +567,7 @@ def test_an_empty_or_ill_formed_argument_is_refused(
                     f"tr({XONLY},addr(1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH))",
                     "not allowed inside",
                 ),
-                ("tr(raw(00))", "^not a key expression$"),
+                ("tr(raw(00))", "^key 0: not a key expression$"),
                 (
                     f"tr({XONLY},and_v(v:pk({X1}),raw(51)))",
                     TR_LEAF_FAULT,

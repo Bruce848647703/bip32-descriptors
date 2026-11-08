@@ -132,18 +132,24 @@ def test_text_after_a_whole_descriptor_is_the_top_level_fallback(
 @pytest.mark.parametrize(
     "descriptor,message",
     [
-        (f"and_v(v:pk(zz),pk({K}))", "^invalid key expression$"),
-        (f"sh(and_v(v:pk(zz),pk({K})))", "^invalid key expression$"),
-        (f"and_v(and_v(pk({K}),pk({K2})),pk(zz))", "^invalid key expression$"),
-        (f"sh(and_v(and_v(pk({K}),pk({K2})),pk(zz)))", "^invalid key expression$"),
-        ("v:pk(zz)", "^invalid key expression$"),
+        (f"and_v(v:pk(zz),pk({K}))", "^key 0: invalid key expression$"),
+        (f"sh(and_v(v:pk(zz),pk({K})))", "^key 0: invalid key expression$"),
+        (
+            f"and_v(and_v(pk({K}),pk({K2})),pk(zz))",
+            "^key 2: invalid key expression$",
+        ),
+        (
+            f"sh(and_v(and_v(pk({K}),pk({K2})),pk(zz)))",
+            "^key 2: invalid key expression$",
+        ),
+        ("v:pk(zz)", "^key 0: invalid key expression$"),
         (
             f"multi_a(1,[dead]]{X})x",
-            r"^more than one '\]' in a single key expression$",
+            r"^key 0: more than one '\]' in a single key expression$",
         ),
         (
             f"sh(multi_a(1,[dead]]{X})x)",
-            r"^more than one '\]' in a single key expression$",
+            r"^key 0: more than one '\]' in a single key expression$",
         ),
     ],
 )
@@ -193,7 +199,7 @@ def test_multipath_descriptors_names_the_same_fault() -> None:
         (f"sh(pk_h({WIF}))", MINISCRIPT_OUTSIDE),
     ],
 )
-def test_the_refusal_leaves_the_expression_out(descriptor: str, message: str) -> None:
+def test_the_refusal_leaves_the_keys_out(descriptor: str, message: str) -> None:
     """Core quotes the top-level expression, and it can hold a private key."""
     with pytest.raises(BTClibValueError, match=message) as e:
         parse(descriptor)

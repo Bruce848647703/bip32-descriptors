@@ -26,7 +26,7 @@ from tests.secret_free import assert_secret_free
 
 _KEY = PrvKeyData(1).pub.sec.hex()
 _X_ONLY = _KEY[2:]
-_KEY_FAULT = "^invalid key expression$"
+_KEY_FAULT = "^key [0-9]+: invalid key expression$"
 
 
 @pytest.mark.parametrize(
@@ -73,7 +73,7 @@ def test_a_multisig_outside_its_context_reads_no_key(
         ),
         (
             f"tr({_X_ONLY},and_v(v:multi_a(1,[dead]]{_X_ONLY},{_X_ONLY}{{),pk({_X_ONLY})))",
-            r"^more than one '\]' in a single key expression$",
+            r"^key 1: more than one '\]' in a single key expression$",
         ),
         (f"wsh(and_v(v:multi(1,{_KEY}{{),pk({_KEY})))", _KEY_FAULT),
     ],

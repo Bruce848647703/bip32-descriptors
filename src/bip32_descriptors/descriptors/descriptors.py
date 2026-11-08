@@ -213,6 +213,8 @@ from bip32_descriptors.descriptors.key_expression import (
     _derived_once,
     _expression,
     _filed_wifs,
+    _keys_counted,
+    _keys_read_again,
     _offered_signature,
     _one_hardening,
     _parse_key,
@@ -2723,8 +2725,9 @@ def _parse_leaf_miniscript(
     this one is unspendable or unsafe.
 
     On a ``_CoreFallbackError`` Core says "'<leaf>' is not a valid
-    descriptor function". The message here leaves the leaf out, since it
-    can hold a private key.
+    descriptor function". `_not_a_function` follows it with what the
+    leaf's brackets enclose written "...", and writes "tr() leaf" where
+    that is still too long to quote.
     """
     if expression.startswith("multi_a("):
         _read_unclosed_multisig_keys(expression, miniscript.TAPSCRIPT, prv_keys)
@@ -2738,7 +2741,7 @@ def _parse_leaf_miniscript(
                 _filed_wifs(),
             )
         except miniscript._CoreFallbackError as error:
-            err_msg = "tr() leaf is not a valid descriptor function"
+            err_msg = _not_a_function(expression, "tr() leaf")
             raise BTClibValueError(err_msg) from error
         _assert_sane(node, prv_keys)
     return node
@@ -2924,7 +2927,8 @@ def _parse_inner(
     """
     head = _split_unpaired_arguments(argument)[0]
     if len(head) < len(argument):
-        _parse_expression(head, context, network, prv_keys)
+        with _keys_read_again():
+            _parse_expression(head, context, network, prv_keys)
     return _parse_expression(argument, context, network, prv_keys)
 
 
@@ -3270,16 +3274,44 @@ def _parse_miniscript_expression(
         return MiniscriptDescriptor(node, network=network)
 
 
-# what Bitcoin Core names, outside wsh() and tr(), where an expression is
-# neither a function nor a miniscript. At the top level Core quotes the
-# expression, "'<expression>' is not a valid descriptor function": the
-# message here leaves it out, since it can hold a private key
-_NOT_A_FUNCTION = {
-    _TOP: "top-level expression is not a valid descriptor function",
-    _P2SH: "A function is needed within P2SH",
-}
-# and what it names there for a miniscript it reads
+# what Bitcoin Core names inside sh() where an expression is neither a
+# function nor a miniscript; at the top level, `_not_a_function`
+_NOT_IN_P2SH = "A function is needed within P2SH"
+# and what it names, inside sh() and at the top level, for a miniscript it
+# reads
 _MINISCRIPT_OUTSIDE = "Miniscript expressions can only be used in wsh or tr."
+
+
+# the longest text a refusal quotes where a name belongs, too short for a
+# key: section 7 of the btclib-org standard, "A refusal carries no secret"
+_QUOTED_NAME_SIZE = 16
+
+
+def _not_a_function(expression: str, where: str) -> str:
+    """Return Core's refusal of an expression that is no descriptor function.
+
+    Core quotes the expression, "'<expression>' is not a valid descriptor
+    function". What its brackets enclose can hold a private key, so it is
+    written "...", which leaves the name and any text after the closing
+    bracket. That is quoted where it is short enough to be a name, and
+    `where` names the expression otherwise.
+    """
+    shown = []
+    depth = 0
+    for char in expression:
+        if char == "(":
+            depth += 1
+            if depth == 1:
+                shown.append("(...")
+        elif char == ")" and depth:
+            depth -= 1
+            if not depth:
+                shown.append(")")
+        elif not depth:
+            shown.append(char)
+    name = "".join(shown)
+    named = where if len(name) > _QUOTED_NAME_SIZE else f"'{name}'"
+    return f"{named} is not a valid descriptor function"
 
 
 def _parse_no_function(
@@ -3306,7 +3338,12 @@ def _parse_no_function(
             _filed_wifs(),
         )
     except miniscript._CoreFallbackError as error:
-        raise BTClibValueError(_NOT_A_FUNCTION[context]) from error
+        err_msg = (
+            _NOT_IN_P2SH
+            if context == _P2SH
+            else _not_a_function(expression, "top-level expression")
+        )
+        raise BTClibValueError(err_msg) from error
     except miniscript._TypeFaultError as error:
         raise BTClibValueError(_MINISCRIPT_OUTSIDE) from error
     raise BTClibValueError(_MINISCRIPT_OUTSIDE)
@@ -3423,8 +3460,7 @@ def parse(
             parsed = _parse_text(strip_checksum(descriptor), network, prv_keys)
     finally:
         _PREIMAGES.reset(token)
-    for key in parsed.key_expressions:
-        _assert_network(key, network)
+    _assert_network(parsed.key_expressions, network)
     return parsed
 
 
@@ -3438,9 +3474,10 @@ def _parse_text(
     # Core ends the descriptor at its first "," or unmatched closing bracket,
     # reads what comes before, and only then finds the rest
     head = _split_unpaired_arguments(text)[0]
-    parsed = _parse_expression(
-        head, _TOP, network, {} if prv_keys is None else prv_keys
-    )
+    with _keys_counted():
+        parsed = _parse_expression(
+            head, _TOP, network, {} if prv_keys is None else prv_keys
+        )
     if len(head) < len(text):
         if text[len(head)] == ",":
             raise BTClibValueError(
@@ -4972,6 +5009,10 @@ def wallet_policy_descriptor(
     or is a top-level ``multi()`` or ``sortedmulti()``, or is a ``pk()``
     directly inside ``sh()``, or holds a ``raw()``, ``rawpkh()``,
     ``rawleaf()`` or ``rawnode()``, is refused as `wallet_policy` refuses it.
+
+    A key the descriptor refuses is named as `parse` names it, by its
+    place in the descriptor built and not by its ``@`` number: in
+    ``wsh(multi(1,@1/**,@0/**))``, ``@1`` is key 0.
 
     No `prv_keys`: every wildcard a wallet-policy template writes is
     unhardened, which is the whole of BIP388's "the seed alone is no

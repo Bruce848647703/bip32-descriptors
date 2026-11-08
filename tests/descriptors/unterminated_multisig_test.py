@@ -48,7 +48,8 @@ def test_a_multisig_key_is_read_before_its_trailing_structure(
 ) -> None:
     """Core names the repeated origin end before it finds the structure."""
     with pytest.raises(
-        BTClibValueError, match=r"^more than one '\]' in a single key expression$"
+        BTClibValueError,
+        match=r"^key [0-9]+: more than one '\]' in a single key expression$",
     ):
         read(descriptor)
 
@@ -104,7 +105,9 @@ def test_a_multisig_key_ends_at_a_comma_past_a_close() -> None:
     Core ends a key at the next comma, and at ")" only once no comma is
     left, so the first key read here is ``musig()``.
     """
-    with pytest.raises(BTClibValueError, match=r"^musig\(\) takes at least one key$"):
+    with pytest.raises(
+        BTClibValueError, match=r"^key 1: musig\(\) takes at least one key$"
+    ):
         parse(f"tr({_X_ONLY},multi_a(1,musig(),)")
 
 
