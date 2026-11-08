@@ -5,24 +5,29 @@
 """What `parse` never builds is refused when a descriptor is built by hand.
 
 A field of the wrong type, in every `Descriptor` fragment and in a
-`MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`, `UnusedDescriptor`
-and `MultiA` also refuse a value `parse` refuses, as a `BTClibValueError`.
-Issues btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#103
-and btclib-org/bip32-descriptors#134.
+`MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`,
+`MiniscriptDescriptor`, `UnusedDescriptor` and `MultiA` also refuse a
+value `parse` refuses, as a `BTClibValueError`. Issues
+btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
+btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119 and
+btclib-org/bip32-descriptors#134.
 """
 
 from __future__ import annotations
 
 import pickle
+from collections.abc import Callable
 from dataclasses import fields, replace
 from typing import Any
 
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
+from typing_extensions import override
 
-from bip32_descriptors.bip32 import rootxprv_from_seed
-from bip32_descriptors.descriptors import miniscript, parse
+from bip32_descriptors.bip32 import derive, rootxprv_from_seed, xpub_from_xprv
+from bip32_descriptors.descriptors import at_index, miniscript, normalized, parse
+from bip32_descriptors.descriptors import descriptors as descriptors_module
 from bip32_descriptors.descriptors.descriptors import (
     AddrDescriptor,
     ComboDescriptor,
@@ -173,6 +178,303 @@ def test_a_tr_leaf_of_an_unknown_context_is_refused(
     with pytest.raises(BTClibValueError, match=err_msg) as e:
         TrDescriptor(_KEY, leaf)
     assert_secret_free(e.value, [spelling])
+
+
+def test_a_wsh_miniscript_of_another_context_is_refused() -> None:
+    """A tapscript node would write 32-byte keys into a P2WSH script.
+
+    Issue btclib-org/bip32-descriptors#119.
+    """
+    expression = f"and_v(v:pk({_C}),older(1))"
+    p2wsh = miniscript.parse(expression, miniscript.P2WSH)
+    assert parse(f"wsh({expression})") == WshDescriptor(MiniscriptDescriptor(p2wsh))
+    node = miniscript.parse(expression, miniscript.TAPSCRIPT)
+    with pytest.raises(
+        BTClibValueError, match="^not a P2WSH node: and_v in tapscript$"
+    ):
+        WshDescriptor(MiniscriptDescriptor(node))
+    node = _unpickled(p2wsh)
+    _with_context(node.subs[0], miniscript.TAPSCRIPT)
+    with pytest.raises(BTClibValueError, match="^not a P2WSH node: v: in tapscript$"):
+        MiniscriptDescriptor(node)
+
+
+@pytest.mark.parametrize("context,spelling", _UNKNOWN_CONTEXTS)
+def test_a_wsh_miniscript_of_an_unknown_context_is_refused(
+    context: Any, spelling: str | bytes
+) -> None:
+    """A context the library does not define is not echoed, being any value."""
+    node = _unpickled(miniscript.parse("1", miniscript.P2WSH))
+    _with_context(node, context)
+    if isinstance(context, str):
+        error: type[Exception] = BTClibValueError
+        err_msg = "^not a P2WSH node: 1 in another context$"
+    else:
+        error = BTClibTypeError
+        err_msg = f"^invalid context type: {type(context).__name__}$"
+    with pytest.raises(error, match=err_msg) as e:
+        MiniscriptDescriptor(node)
+    assert_secret_free(e.value, [spelling])
+
+
+def test_a_node_of_another_context_and_an_unknown_fragment_is_not_echoed() -> None:
+    """Its fragment is any value, so the refusal says "a node".
+
+    In a ``tr()`` leaf and in a ``wsh()``. Issue
+    btclib-org/bip32-descriptors#153.
+    """
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    object.__setattr__(leaf, "fragment", _RANDOM_HEX)
+    _with_context(leaf, miniscript.P2WSH)
+    with pytest.raises(
+        BTClibValueError, match="^not a tapscript node: a node in P2WSH$"
+    ) as e:
+        TrDescriptor(_KEY, leaf)
+    assert_secret_free(e.value, [_RANDOM_HEX])
+    node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))
+    object.__setattr__(node, "fragment", _RANDOM_HEX)
+    _with_context(node, miniscript.TAPSCRIPT)
+    with pytest.raises(
+        BTClibValueError, match="^not a P2WSH node: a node in tapscript$"
+    ) as e:
+        MiniscriptDescriptor(node)
+    assert_secret_free(e.value, [_RANDOM_HEX])
+
+
+def test_a_wsh_miniscript_holding_what_is_no_node_is_refused() -> None:
+    """As a ``tr()`` leaf holding one is, naming the type alone."""
+    node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))
+    object.__setattr__(node, "subs", (_RANDOM_HEX,))
+    with pytest.raises(
+        BTClibTypeError, match="^invalid miniscript node type: str$"
+    ) as e:
+        MiniscriptDescriptor(node)
+    assert_secret_free(e.value, [_RANDOM_HEX])
+
+
+@pytest.mark.parametrize(
+    "forged,kind",
+    [
+        (MultiA(1, (_KEY2,)), "MultiA"),
+        (_KEY2, "KeyExpression"),
+        ((_KEY2, _KEY2), "tuple"),
+    ],
+    ids=["MultiA", "KeyExpression", "tuple"],
+)
+def test_a_tr_leaf_holding_a_tree_node_as_a_subexpression_is_refused(
+    forged: object, kind: str
+) -> None:
+    """A tree node of another type is no miniscript node inside a leaf."""
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    object.__setattr__(leaf, "subs", (forged,))
+    with pytest.raises(
+        BTClibTypeError, match=f"^invalid miniscript node type: {kind}$"
+    ) as e:
+        TrDescriptor(_KEY, leaf)
+    assert_secret_free(e.value, [str(forged)])
+
+
+class _Network(str):
+    """A network name whose methods record whether `parse` was building."""
+
+    __slots__ = ()
+    # each call, with whether `parse` was building a descriptor then
+    calls: list[tuple[str, bool]] = []  # noqa: RUF012
+
+    def _record(self, name: str) -> None:
+        _Network.calls.append((name, descriptors_module._SANE_BY_PARSE.get()))
+
+    @override
+    def strip(self, chars: str | None = None) -> str:
+        self._record("strip")
+        return _Network(str.strip(self, chars))
+
+    @override
+    def lower(self) -> str:
+        self._record("lower")
+        return _Network(str.lower(self))
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        self._record("__eq__")
+        return str.__eq__(self, other)
+
+    @override
+    def __hash__(self) -> int:
+        self._record("__hash__")
+        return str.__hash__(self)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [f"wsh(and_v(v:pk({_C}),pk({PrvKeyData(4).pub.sec.hex()})))", f"tr({_X},pk({_X}))"],
+    ids=["wsh", "tr"],
+)
+def test_parse_builds_with_no_method_of_a_caller_s_network(text: str) -> None:
+    """`parse` hands the constructors the network table's own string."""
+    _Network.calls.clear()
+    network = _Network(" MAINNET ")
+    descriptor = parse(text, network)
+    # the control: its methods run, as `parse` validates the name
+    assert ("lower", False) in _Network.calls
+    assert all(not building for _, building in _Network.calls)
+    assert type(descriptor.network) is str
+    assert descriptor.network == "mainnet"
+
+
+def test_a_large_wsh_miniscript_of_an_unknown_context_is_refused() -> None:
+    """Its context is refused before its size, which would name it."""
+    keys = [
+        parse(f"pk({PrvKeyData(i).pub.sec.hex()})").key_expressions
+        for i in range(5, 126)
+    ]
+    node = miniscript.Miniscript(
+        "c:", subs=(miniscript.Miniscript("pk_k", keys=keys[0]),)
+    )
+    for key in keys[1:]:
+        check = miniscript.Miniscript(
+            "c:", subs=(miniscript.Miniscript("pk_k", keys=key),)
+        )
+        verify = miniscript.Miniscript("v:", subs=(check,))
+        node = miniscript.Miniscript("and_v", subs=(verify, node))
+    with pytest.raises(BTClibValueError, match="^miniscript too large for P2WSH: "):
+        MiniscriptDescriptor(node)
+    node = _unpickled(node)
+    _with_context(node, _RANDOM_HEX)
+    with pytest.raises(BTClibValueError, match="^not a P2WSH node: and_v in another"):
+        MiniscriptDescriptor(node)
+    with pytest.raises(
+        BTClibValueError, match="^miniscript too large for P2WSH: "
+    ) as e:
+        miniscript._assert_fits(node)
+    assert_secret_free(e.value, [_RANDOM_HEX])
+
+
+_XPRV = rootxprv_from_seed(_RANDOM_HEX)
+_XPUB = xpub_from_xprv(_XPRV)
+_C2 = PrvKeyData(4).pub.sec.hex()
+# each with the fault `parse` names, its keys filled in per context
+_INSANE = [
+    ("and_v(v:pk({0}),pk({0}))", "it repeats a public key"),
+    ("and_v(v:pk({0}),or_i(1,1))", "malleable witnesses exist"),
+    ("older(1)", "witnesses without signature exist"),
+    (
+        "and_v(v:pk({0}),and_v(v:older(1),older(4194305)))",
+        "it mixes timelocks expressed in blocks and in seconds",
+    ),
+    ("and_v(v:pk({0}),0)", "is not satisfiable"),
+]
+
+
+@pytest.mark.parametrize(
+    "expression,fault", _INSANE, ids=[fault for _, fault in _INSANE]
+)
+def test_a_miniscript_parse_refuses_is_refused_when_built(
+    expression: str, fault: str
+) -> None:
+    """In a tr() leaf and in a wsh(), with the refusal `parse` gives.
+
+    Built, the descriptor would not parse back from its own text. Issue
+    btclib-org/bip32-descriptors#85.
+    """
+    tapscript = expression.format(_X2)
+    p2wsh = expression.format(_C2)
+    leaf = miniscript.parse(tapscript, miniscript.TAPSCRIPT)
+    node = miniscript.parse(p2wsh)
+    cases: list[tuple[str, Callable[[], object]]] = [
+        (
+            f"tr({_X},{{pk({_X2}),{tapscript}}})",
+            lambda: TrDescriptor(_KEY, (_KEY2, leaf)),
+        ),
+        (f"wsh({p2wsh})", lambda: WshDescriptor(MiniscriptDescriptor(node))),
+    ]
+    for text, build in cases:
+        with pytest.raises(BTClibValueError, match=f"{fault}$") as parsed:
+            parse(text)
+        with pytest.raises(BTClibValueError) as built:
+            build()
+        assert str(built.value) == str(parsed.value)
+
+
+@pytest.mark.parametrize(
+    "node,err_msg",
+    [
+        (
+            miniscript.Miniscript("pk_k", keys=(parse(f"pk({_C})").key_expressions)),
+            rf"^not a miniscript script: pk_k\({_C}\) is a K, not a B$",
+        ),
+        (
+            miniscript.Miniscript(
+                "and_b", subs=(miniscript.Miniscript("1"), miniscript.Miniscript("1"))
+            ),
+            "^ill-typed miniscript: and_b over ",
+        ),
+    ],
+    ids=["not-a-B", "ill-typed"],
+)
+def test_a_miniscript_that_is_no_script_is_refused_when_built(
+    node: miniscript.Miniscript, err_msg: str
+) -> None:
+    """What `miniscript.parse` refuses before any sanity is asked."""
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MiniscriptDescriptor(node)
+
+
+def test_a_sane_miniscript_built_by_hand_parses_back() -> None:
+    """The control: the issue's leaf with two keys, and its p2wsh twin."""
+    leaf = miniscript.parse(f"and_v(v:pk({_X2}),pk({_X}))", miniscript.TAPSCRIPT)
+    tr = TrDescriptor(_KEY, leaf)
+    assert parse(str(tr)) == tr
+    wsh = WshDescriptor(
+        MiniscriptDescriptor(miniscript.parse(f"and_v(v:pk({_C2}),pk({_C}))"))
+    )
+    assert parse(str(wsh)) == wsh
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["tr({0},and_v(v:pk({1}/*),pk({1}/1)))", "wsh(and_v(v:pk({1}/*),pk({1}/1)))"],
+    ids=["tr", "wsh"],
+)
+def test_at_index_refuses_an_index_where_a_key_repeats(template: str) -> None:
+    """The keys differ at index 0, where `parse` compares them, not at 1.
+
+    At index 1 both keys are ``/1``, and the script is malleable there.
+    """
+    descriptor = parse(template.format(_X, _XPUB))
+    for index in (0, 2):
+        assert parse(str(at_index(descriptor, index))) == at_index(descriptor, index)
+    with pytest.raises(
+        BTClibValueError, match="is not sane: it repeats a public key$"
+    ) as e:
+        at_index(descriptor, 1)
+    assert_secret_free(e.value, [_XPRV, bytes.fromhex(_RANDOM_HEX)])
+
+
+def test_normalized_refuses_what_repeats_a_key_once_derived() -> None:
+    """Two spellings of one key, one of them behind a hardened step.
+
+    Without `prv_keys` the hardened one is compared by its expression, so
+    `parse` reads the descriptor; normalized, both are the same xpub.
+    """
+    child = xpub_from_xprv(derive(_XPRV, "m/1h"))
+    descriptor = parse(f"wsh(and_v(v:pk({_XPUB}/1h/0),pk({child}/0)))")
+    prv_keys = {_XPUB: _XPRV}
+    with pytest.raises(
+        BTClibValueError, match="is not sane: it repeats a public key$"
+    ) as e:
+        normalized(descriptor, prv_keys)
+    assert_secret_free(e.value, [_XPRV, bytes.fromhex(_RANDOM_HEX)])
+
+
+def test_a_refusal_when_built_names_no_private_key() -> None:
+    """A leaf read from an xprv holds its xpub, which is what is named."""
+    prv_keys: dict[str, str] = {}
+    expression = f"and_v(v:pk({_XPRV}/1),pk({_XPRV}/1))"
+    leaf = miniscript.parse(expression, miniscript.TAPSCRIPT, prv_keys)
+    with pytest.raises(BTClibValueError, match=rf"pk\({_XPUB}/1\)\) is not sane") as e:
+        TrDescriptor(_KEY, leaf)
+    assert_secret_free(e.value, [_XPRV, bytes.fromhex(_RANDOM_HEX)])
 
 
 @pytest.mark.parametrize("sort", [False, True])
