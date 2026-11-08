@@ -2144,7 +2144,8 @@ def test_no_private_key_survives_the_parse() -> None:
     assert parse(descriptor).key_expressions[0].xkey == xpub
 
     # the WIF was already public before this: no derivation is made from
-    # it and nothing here signs, so it is reduced and not filed
+    # it and nothing here signs, so it is reduced, and filed in `wifs`
+    # alone where a caller passes one (tests/descriptors/wif_test.py)
     assert wif not in prv_keys.values()
     assert parsed.key_expressions[1].pub_key == b58.prv_key_data_from_wif(wif).pub.sec
 

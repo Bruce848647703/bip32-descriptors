@@ -87,9 +87,10 @@ back through the `prv_keys` mapping a caller passes in -- Bitcoin Core's
 `FlatSigningProvider` it filled. Expanding a descriptor takes the mapping
 back for the one thing an xpub cannot do, a hardened step, which is why
 `script_pub_keys`, `satisfy`, `expansion` and the rest all end in an
-optional `prv_keys`. A WIF is not in that mapping: it was already reduced
-to its public key on the way in, this module deriving nothing from it and
-signing nothing with it.
+optional `prv_keys`. A WIF is not in that mapping: it is reduced to its
+public key on the way in, this module deriving nothing from it and
+signing nothing with it, and it goes back through a `wifs` mapping of
+its own, keyed by the hex `str` writes for that public key.
 
 Nor does a parsed descriptor hold a hash preimage. A hash fragment's
 ``preimage(HEX)`` is read to the digest the node keeps, and the preimage
@@ -107,8 +108,8 @@ checksum. `add_checksum(str(descriptor))` is the checksummed form: Core's
 `ToString`, `ToStringHelper` writing none, and HWI's and Electrum's
 `to_string`. What it writes is public by construction, there being no
 private material left in a parsed descriptor to write. `private_string`
-is Core's `ToPrivateString`: it takes the two mappings back and writes
-the xprv and ``preimage(HEX)`` spellings, as its docstring says.
+is Core's `ToPrivateString`: it takes the mappings back and writes the
+xprv, WIF and ``preimage(HEX)`` spellings, as its docstring says.
 
 `infer_descriptor` goes back from a script instead: Bitcoin Core's
 `InferDescriptor`, reading the script and what a `Provider` knows of its
@@ -128,10 +129,11 @@ What this module exports is the checksum functions, `parse` and
 made of -- `DescriptorTree` and the `MultiA`, `RawLeaf` and `RawNode` a
 tree may hold among them, all being names a caller reads off
 `TrDescriptor.tree`.
-`KeyExpression` and `PrvKeys` are `key_expression`'s, and `Preimages` and
-the `Miniscript` a `MiniscriptDescriptor` holds are `miniscript`'s; the
-package `__init__` re-exports them, being what a caller reads off
-`Descriptor.key_expressions` and annotates a mapping with.
+`KeyExpression`, `PrvKeys` and `Wifs` are `key_expression`'s, and
+`Preimages` and the `Miniscript` a `MiniscriptDescriptor` holds are
+`miniscript`'s; the package `__init__` re-exports them, being what a
+caller reads off `Descriptor.key_expressions` and annotates a mapping
+with.
 `INPUT_CHARSET`, `CHECKSUM_CHARSET` and `GENERATOR` stay out: they are the
 three tables BIP380's checksum is computed from, which is what `checksum`,
 `add_checksum` and `strip_checksum` answer.
@@ -142,7 +144,14 @@ from __future__ import annotations
 import operator
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, replace
@@ -190,8 +199,10 @@ from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
 from bip32_descriptors.descriptors import miniscript
 from bip32_descriptors.descriptors.key_expression import (
     _PRINTED_PRV_KEYS,
+    _PRINTED_WIFS,
     KeyExpression,
     PrvKeys,
+    Wifs,
     _assert_index_range,
     _assert_multipath_keys,
     _assert_musig_allowed,
@@ -199,6 +210,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_prv_keys,
     _derived_once,
     _expression,
+    _filed_wifs,
     _offered_signature,
     _one_hardening,
     _parse_key,
@@ -209,6 +221,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _split_unpaired_arguments,
     _steps_compared,
     _steps_set_aside,
+    _wifs_filed_in,
 )
 from bip32_descriptors.descriptors.miniscript import (
     _HEX,
@@ -2559,7 +2572,7 @@ def _one_argument(arguments: list[str], name: str) -> str:
     return arguments[0]
 
 
-def _parse_multi_a(name: str, text: str, prv_keys: dict[str, str]) -> MultiA:
+def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> MultiA:
     """Return the leaf of a BIP387 ``multi_a()`` or ``sortedmulti_a()``.
 
     `text` is what the parentheses enclose. The keys are read as a
@@ -2611,7 +2624,9 @@ def _assert_multisig_end(name: str, text: str, args: list[str]) -> None:
     _split_arguments(text)
 
 
-def _parse_leaf_miniscript(expression: str, prv_keys: dict[str, str]) -> Miniscript:
+def _parse_leaf_miniscript(
+    expression: str, prv_keys: MutableMapping[str, str]
+) -> Miniscript:
     """Return the miniscript of a tr() leaf, sanity checked as a wsh() one is.
 
     The tapscript dialect: 32-byte keys, ``multi_a()`` where ``wsh()`` has
@@ -2631,7 +2646,11 @@ def _parse_leaf_miniscript(expression: str, prv_keys: dict[str, str]) -> Miniscr
     with _steps_compared():
         try:
             node = _parse_miniscript(
-                expression, miniscript.TAPSCRIPT, prv_keys, _filed_preimages()
+                expression,
+                miniscript.TAPSCRIPT,
+                prv_keys,
+                _filed_preimages(),
+                _filed_wifs(),
             )
         except miniscript._CoreFallbackError as error:
             err_msg = "tr() leaf is not a valid descriptor function"
@@ -2640,7 +2659,9 @@ def _parse_leaf_miniscript(expression: str, prv_keys: dict[str, str]) -> Miniscr
     return node
 
 
-def _parse_leaf(expression: str, prv_keys: dict[str, str]) -> DescriptorLeaf | RawNode:
+def _parse_leaf(
+    expression: str, prv_keys: MutableMapping[str, str]
+) -> DescriptorLeaf | RawNode:
     """Return a tr() leaf or ``rawnode()``: what ``Expr`` cut, read whole.
 
     Core's ``Func`` takes a name only where the text ends in ")", so a
@@ -2655,7 +2676,7 @@ def _parse_leaf(expression: str, prv_keys: dict[str, str]) -> DescriptorLeaf | R
 
 
 def _parse_other_leaf(
-    expression: str, name: str, prv_keys: dict[str, str]
+    expression: str, name: str, prv_keys: MutableMapping[str, str]
 ) -> DescriptorLeaf | RawNode:
     """Return the tree of a ``pk()``, a raw function or a miniscript leaf."""
     if name == "musig":
@@ -2688,7 +2709,7 @@ def _parse_other_leaf(
 
 
 def _parse_tree(
-    text: str, pos: int, prv_keys: dict[str, str]
+    text: str, pos: int, prv_keys: MutableMapping[str, str]
 ) -> tuple[DescriptorTree, int]:
     """Return the script tree starting at `pos`, and the index past it.
 
@@ -2754,7 +2775,7 @@ def _no_uncompressed(context: str) -> bool:
 
 
 def _parse_pk(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     key = _parse_key(
         args[0],
@@ -2767,7 +2788,7 @@ def _parse_pk(
 
 
 def _parse_pkh(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     key = _parse_key(
         args[0],
@@ -2780,7 +2801,7 @@ def _parse_pkh(
 
 
 def _parse_wpkh(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     key = _parse_key(
         args[0],
@@ -2793,7 +2814,7 @@ def _parse_wpkh(
 
 
 def _parse_combo(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     return ComboDescriptor(
         _parse_key(
@@ -2808,7 +2829,7 @@ def _parse_combo(
 
 
 def _parse_inner(
-    argument: str, context: str, network: str, prv_keys: dict[str, str]
+    argument: str, context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     """Return the expression of a ``sh()`` or ``wsh()`` `argument`.
 
@@ -2823,14 +2844,14 @@ def _parse_inner(
 
 
 def _parse_sh(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     inner = _parse_inner(args[0], _P2SH, network, prv_keys)
     return ShDescriptor(inner, network=network)
 
 
 def _parse_wsh(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     try:
         inner = _parse_inner(args[0], _P2WSH, network, prv_keys)
@@ -2844,7 +2865,7 @@ def _parse_multi(
     text: str,
     context: str,
     network: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
 ) -> Descriptor:
     """Return the multisig `name` names, `text` what its parentheses enclose."""
     args = _split_unpaired_arguments(text)
@@ -2914,19 +2935,19 @@ def _assert_multi_size(
 
 
 def _parse_ordered_multi(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     return _parse_multi("multi", args[0], context, network, prv_keys)
 
 
 def _parse_sorted_multi(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     return _parse_multi("sortedmulti", args[0], context, network, prv_keys)
 
 
 def _parse_tr(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     """Return the ``tr()`` of `args`, its one argument the whole text.
 
@@ -2956,7 +2977,7 @@ def _parse_tr(
 
 
 def _parse_rawtr(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     # one key and no tree: what Core's error says too, "rawtr(): only one
     # key expected", the function having nothing to put a second key in
@@ -2971,7 +2992,7 @@ def _parse_rawtr(
 
 
 def _parse_unused(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     key = _parse_key(
         _one_argument(args, "unused"),
@@ -2984,7 +3005,7 @@ def _parse_unused(
 
 
 def _parse_addr(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     address = _one_argument(args, "addr")
     # the network of an addr() descriptor is the address's own: it is
@@ -3021,7 +3042,7 @@ _EMBEDDED_SCRIPT_SIZE = {_P2SH: MAX_SCRIPT_ELEMENT_SIZE, _P2WSH: MAX_SCRIPT_SIZE
 
 
 def _parse_raw(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
     limit = _EMBEDDED_SCRIPT_SIZE.get(context)
@@ -3032,7 +3053,7 @@ def _parse_raw(
 
 
 def _parse_rawpkh(
-    args: list[str], context: str, network: str, prv_keys: dict[str, str]
+    args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     key_hash = _hex_bytes(_one_argument(args, "rawpkh"), "Rawpkh hash is not hex")
     if len(key_hash) != _KEY_HASH_SIZE:
@@ -3109,7 +3130,10 @@ _WHOLE_ARGUMENT_FUNCTIONS = frozenset(
 # beside the others
 _PARSERS: dict[
     str,
-    tuple[tuple[str, ...], Callable[[list[str], str, str, dict[str, str]], Descriptor]],
+    tuple[
+        tuple[str, ...],
+        Callable[[list[str], str, str, MutableMapping[str, str]], Descriptor],
+    ],
 ] = {
     "pk": ((_TOP, _P2SH, _P2WSH, _P2TR), _parse_pk),
     "pkh": ((_TOP, _P2SH, _P2WSH, _P2TR), _parse_pkh),
@@ -3131,7 +3155,7 @@ _PARSERS: dict[
 
 
 def _parse_miniscript_expression(
-    expression: str, context: str, network: str, prv_keys: dict[str, str]
+    expression: str, context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     """Return the MiniscriptDescriptor of a BIP379 expression, sanity checked.
 
@@ -3148,7 +3172,11 @@ def _parse_miniscript_expression(
         )
     with _steps_compared():
         node = _parse_miniscript(
-            expression, _MINISCRIPT_CONTEXTS[context], prv_keys, _filed_preimages()
+            expression,
+            _MINISCRIPT_CONTEXTS[context],
+            prv_keys,
+            _filed_preimages(),
+            _filed_wifs(),
         )
         _assert_sane(node, prv_keys)
     return MiniscriptDescriptor(node, network=network)
@@ -3167,7 +3195,7 @@ _MINISCRIPT_OUTSIDE = "Miniscript expressions can only be used in wsh or tr."
 
 
 def _parse_no_function(
-    expression: str, context: str, network: str, prv_keys: dict[str, str]
+    expression: str, context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     """Return the miniscript of an expression no function takes, or refuse it.
 
@@ -3183,7 +3211,11 @@ def _parse_no_function(
         _read_unclosed_multisig_keys(expression, miniscript.TAPSCRIPT, prv_keys)
     try:
         _parse_miniscript(
-            expression, miniscript.TAPSCRIPT, prv_keys, _filed_preimages()
+            expression,
+            miniscript.TAPSCRIPT,
+            prv_keys,
+            _filed_preimages(),
+            _filed_wifs(),
         )
     except miniscript._CoreFallbackError as error:
         raise BTClibValueError(_NOT_A_FUNCTION[context]) from error
@@ -3193,7 +3225,7 @@ def _parse_no_function(
 
 
 def _parse_expression(
-    expression: str, context: str, network: str, prv_keys: dict[str, str]
+    expression: str, context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     """Return the Descriptor of a SCRIPT expression, in its context.
 
@@ -3238,12 +3270,12 @@ def _parse_expression(
 # outside one. A context variable, as `key_expression._SET_ASIDE` is, rather
 # than a parameter every SCRIPT expression's reader would have to carry for
 # the readers of a miniscript among them
-_PREIMAGES: ContextVar[dict[bytes, bytes] | None] = ContextVar(
+_PREIMAGES: ContextVar[MutableMapping[bytes, bytes] | None] = ContextVar(
     "_PREIMAGES", default=None
 )
 
 
-def _filed_preimages() -> dict[bytes, bytes]:
+def _filed_preimages() -> MutableMapping[bytes, bytes]:
     """Return the mapping the `parse` in progress files a preimage in."""
     preimages = _PREIMAGES.get()
     return {} if preimages is None else preimages
@@ -3252,8 +3284,9 @@ def _filed_preimages() -> dict[bytes, bytes]:
 def parse(
     descriptor: str,
     network: str = "mainnet",
-    prv_keys: dict[str, str] | None = None,
-    preimages: dict[bytes, bytes] | None = None,
+    prv_keys: MutableMapping[str, str] | None = None,
+    preimages: MutableMapping[bytes, bytes] | None = None,
+    wifs: MutableMapping[str, str] | None = None,
 ) -> Descriptor:
     """Return the Descriptor of a descriptor string, checksum verified.
 
@@ -3273,26 +3306,31 @@ def parse(
     Bitcoin Core's parser does. The test networks share one WIF prefix and
     one extended-key version.
 
-    `prv_keys` is a mapping, and what is not one was walked anyway: the
-    lookups below are `in` and `[]`, so a list of pairs answered "not
-    found" for every key rather than saying it is not a mapping. `None`
-    is asked for with it, that being the other type the annotation
-    declares -- and one call rather than a branch, which is what keeps
-    the two spellings of "a declared type" in one place.
+    `prv_keys` is a mutable mapping, and what is not one was walked
+    anyway: the lookups below are `in` and `[]`, so a list of pairs
+    answered "not found" for every key rather than saying it is not a
+    mapping, and a read-only mapping left as the built-in `TypeError` of
+    the first entry filed in it. `None` is asked for with it, that being
+    the other type the annotation declares -- and one call rather than a
+    branch, which is what keeps the two spellings of "a declared type" in
+    one place.
 
     `preimages` is where a hash fragment's ``preimage(HEX)`` is filed,
-    under its digest, as the module docstring says; it is checked the same
-    way. What either mapping was filed with stays in it where the
+    under its digest, and `wifs` where a WIF is, under the hex `str` writes
+    for its public key, as the module docstring says; both are checked the
+    same way. What a mapping was filed with stays in it where the
     descriptor is then refused.
     """
     assert_type(descriptor, str, "descriptor")
     network = validated_network_name(network)
-    assert_type(prv_keys, (Mapping, type(None)), "prv_keys")
-    assert_type(preimages, (Mapping, type(None)), "preimages")
+    assert_type(prv_keys, (MutableMapping, type(None)), "prv_keys")
+    assert_type(preimages, (MutableMapping, type(None)), "preimages")
+    assert_type(wifs, (MutableMapping, type(None)), "wifs")
 
     token = _PREIMAGES.set({} if preimages is None else preimages)
     try:
-        parsed = _parse_text(strip_checksum(descriptor), network, prv_keys)
+        with _wifs_filed_in({} if wifs is None else wifs):
+            parsed = _parse_text(strip_checksum(descriptor), network, prv_keys)
     finally:
         _PREIMAGES.reset(token)
     for key in parsed.key_expressions:
@@ -3300,7 +3338,9 @@ def parse(
     return parsed
 
 
-def _parse_text(text: str, network: str, prv_keys: dict[str, str] | None) -> Descriptor:
+def _parse_text(
+    text: str, network: str, prv_keys: MutableMapping[str, str] | None
+) -> Descriptor:
     """Return the Descriptor of a descriptor text, its keys' networks unread."""
     # Core ends the descriptor at its first "," or unmatched closing bracket,
     # reads what comes before, and only then finds the rest
@@ -3454,14 +3494,18 @@ def normalized(descriptor: Descriptor, prv_keys: PrvKeys | None = None) -> Descr
 
 @contextmanager
 def _private_spellings(
-    prv_keys: PrvKeys | None, preimages: Preimages | None
+    prv_keys: PrvKeys | None,
+    preimages: Preimages | None,
+    wifs: tuple[Wifs | None, str],
 ) -> Iterator[None]:
-    """Have `str` write the private spellings the two mappings hold."""
+    """Have `str` write the private spellings the mappings hold."""
     keys_token = _PRINTED_PRV_KEYS.set(prv_keys)
     preimages_token = _PRINTED_PREIMAGES.set(preimages)
+    wifs_token = _PRINTED_WIFS.set(wifs)
     try:
         yield
     finally:
+        _PRINTED_WIFS.reset(wifs_token)
         _PRINTED_PREIMAGES.reset(preimages_token)
         _PRINTED_PRV_KEYS.reset(keys_token)
 
@@ -3470,27 +3514,30 @@ def private_string(
     descriptor: Descriptor,
     prv_keys: PrvKeys | None = None,
     preimages: Preimages | None = None,
+    wifs: Wifs | None = None,
 ) -> str:
     """Return the descriptor as text, with its private spellings written back.
 
     Bitcoin Core's `ToPrivateString`, the private twin of `str`: an xpub
-    that `prv_keys` names is written as the xprv filed under it, and a
-    hash fragment as ``preimage(HEX)`` where `preimages` holds, under its
-    digest, a preimage that fragment's hash takes to it. The two mappings
-    are what `parse` hands back. What neither names is written as `str`
-    writes it. An entry that is no xprv of its xpub is refused, and so is
-    a preimage that is no 32 bytes.
+    that `prv_keys` names is written as the xprv filed under it, a public
+    key that `wifs` names as the WIF filed under its hex, and a hash
+    fragment as ``preimage(HEX)`` where `preimages` holds, under its
+    digest, a preimage that fragment's hash takes to it. The mappings are
+    what `parse` hands back. What none names is written as `str` writes
+    it. An entry that is no xprv of its xpub is refused, and so is one
+    that is no WIF of its key on the descriptor's network, and a preimage
+    that is no 32 bytes.
 
-    A WIF is written as its public key, as `str` writes it: `parse` files
-    no WIF in `prv_keys`. ``preimage(HEX)`` is no BIP's syntax, as the
-    `miniscript` module docstring says.
+    ``preimage(HEX)`` is no BIP's syntax, as the `miniscript` module
+    docstring says.
 
     Without the checksum, as `str`: `add_checksum` adds it.
     """
     assert_type(descriptor, Descriptor, "descriptor")
     _assert_prv_keys(prv_keys)
     assert_type(preimages, (Mapping, type(None)), "preimages")
-    with _private_spellings(prv_keys, preimages):
+    assert_type(wifs, (Mapping, type(None)), "wifs")
+    with _private_spellings(prv_keys, preimages, (wifs, descriptor.network)):
         return str(descriptor)
 
 

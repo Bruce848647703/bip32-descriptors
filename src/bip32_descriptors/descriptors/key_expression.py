@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 import string
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -62,7 +62,7 @@ from bip32_descriptors.bip32.der_path import (
 )
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
 
-__all__ = ["KeyExpression", "PrvKeys"]
+__all__ = ["KeyExpression", "PrvKeys", "Wifs"]
 
 _FINGERPRINT = re.compile(r"[0-9a-fA-F]{8}")
 _HEX = re.compile(r"[0-9a-fA-F]*")
@@ -88,6 +88,11 @@ _DELIMITERS = re.compile(r"[(){},]")
 # `FlatSigningProvider` is keyed too -- by the key id there, by the xpub
 # here, an extended key being what a descriptor derives from
 PrvKeys = Mapping[str, str]
+
+# and the WIF each fixed key was read from, filed under the hex the
+# descriptor writes for its public key, x-only where the position is: a
+# mapping of its own, so that `PrvKeys` holds extended keys alone
+Wifs = Mapping[str, str]
 
 
 def _assert_prv_keys(prv_keys: object) -> None:
@@ -156,6 +161,74 @@ def _printed_xkey(xkey: str) -> str:
     if xpub != xkey:
         raise BTClibValueError("invalid prv_keys entry: no xprv of its xpub")
     return xprv
+
+
+# the `wifs` the parse in progress files a WIF in, None outside one: a
+# context variable, as `_SET_ASIDE` is, rather than a parameter every
+# reader of a KEY expression would have to carry
+_FILED_WIFS: ContextVar[MutableMapping[str, str] | None] = ContextVar(
+    "_FILED_WIFS", default=None
+)
+
+# the `wifs` `descriptors.private_string` writes back, and the network of
+# the descriptor it writes; None outside it
+_PRINTED_WIFS: ContextVar[tuple[Wifs | None, str] | None] = ContextVar(
+    "_PRINTED_WIFS", default=None
+)
+
+
+def _filed_wifs() -> MutableMapping[str, str]:
+    """Return the mapping the parse in progress files a WIF in."""
+    wifs = _FILED_WIFS.get()
+    return {} if wifs is None else wifs
+
+
+@contextmanager
+def _wifs_filed_in(wifs: MutableMapping[str, str]) -> Iterator[None]:
+    """Have every WIF the parse reads filed in `wifs`."""
+    token = _FILED_WIFS.set(wifs)
+    try:
+        yield
+    finally:
+        _FILED_WIFS.reset(token)
+
+
+def _pub_key_text(key: KeyExpression) -> str:
+    """Return the hex `KeyExpression.__str__` writes for a fixed key."""
+    pub_key = key.pub_key or b""
+    return (pub_key[1:] if key.x_only else pub_key).hex()
+
+
+def _printed_pub_key(key: KeyExpression) -> str:
+    """Return the fixed key `KeyExpression.__str__` writes.
+
+    Its hex, or inside `descriptors.private_string` the WIF its `wifs`
+    file under that hex. An entry that is no WIF of this key on the
+    descriptor's network is refused, quoting none of it, since the text
+    written would not be this descriptor's. So is one padded with
+    whitespace, which btclib strips before it decodes and `parse` refuses.
+    An entry for an x-only key is checked by its x coordinate.
+    """
+    text = _pub_key_text(key)
+    printed = _PRINTED_WIFS.get()
+    wifs, network = printed or (None, "")
+    wif = wifs.get(text) if wifs else None
+    if wif is None:
+        return text
+    if not isinstance(wif, str):
+        err_msg = f"invalid wifs entry type: {type(wif).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    if wif.strip() != wif:
+        raise BTClibValueError("invalid wifs entry: whitespace around it")
+    # compared outside the handler, so that the refusal chains no error
+    # of btclib's
+    try:
+        sec = b58.prv_key_data_from_wif(wif, network).pub.sec
+    except (TypeError, ValueError):
+        sec = b""
+    if (sec[1:] if key.x_only else sec).hex() != text:
+        raise BTClibValueError(f"invalid wifs entry: no {network} WIF of its key")
+    return wif
 
 
 @contextmanager
@@ -419,7 +492,7 @@ class KeyExpression:
         key to write and `ToPrivateString` taking the private material
         back from the caller. `descriptors.private_string` is the second
         one: inside it, this writes the xprv its `prv_keys` file under the
-        xpub.
+        xpub, and the WIF its `wifs` file under the public key's hex.
 
         An x-only key is written as the 32 bytes a ``tr()`` holds, which
         is the spelling it was read in and the only one allowed there.
@@ -442,7 +515,7 @@ class KeyExpression:
             )
             text = f"[{path}]"
         if self.pub_key is not None:
-            return text + (self.pub_key[1:] if self.x_only else self.pub_key).hex()
+            return text + _printed_pub_key(self)
         text += _printed_xkey(self.xkey)
         for index in self.der_path:
             text += "/" + str_from_index_int(index, self.hardening)
@@ -751,10 +824,10 @@ def _is_extended_key(key: str) -> bool:
     return True
 
 
-def _neutered(xkey: str, prv_keys: dict[str, str]) -> str:
+def _neutered(xkey: str, prv_keys: MutableMapping[str, str]) -> str:
     """Return the public spelling of an extended key, filing the private one.
 
-    The one place a descriptor's private material is separated from the
+    Where an extended key's private material is separated from the
     descriptor, and the reason `KeyExpression.xkey` can be said to be
     public: an xprv is answered with its xpub, and the xprv goes to the
     caller's mapping under that xpub. An xpub is answered with itself and
@@ -1123,7 +1196,7 @@ def _assert_musig_multipath(*, participants: list[int], path: int) -> None:
 
 
 def _musig_participants(
-    arguments: list[str], prv_keys: dict[str, str]
+    arguments: list[str], prv_keys: MutableMapping[str, str]
 ) -> tuple[tuple[KeyExpression, ...], list[int]]:
     """Return the participants of a ``musig()``, and their step lengths.
 
@@ -1150,7 +1223,7 @@ def _musig_participants(
         raise BTClibValueError(f"musig(): {e}") from e
 
 
-def _parse_musig(expression: str, prv_keys: dict[str, str]) -> KeyExpression:
+def _parse_musig(expression: str, prv_keys: MutableMapping[str, str]) -> KeyExpression:
     """Return the KeyExpression of a BIP390 ``musig()`` expression.
 
     The participants are KEY expressions read as any other key in a
@@ -1202,7 +1275,7 @@ def _parse_musig(expression: str, prv_keys: dict[str, str]) -> KeyExpression:
 
 def _parse_key(
     expression: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
     *,
     x_only: bool,
     compressed: bool,
@@ -1254,7 +1327,7 @@ def _parse_key(
 
 def _read_key(
     expression: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
     *,
     x_only: bool,
     compressed: bool,
@@ -1295,4 +1368,7 @@ def _read_key(
     )
     if compressed and not key_expression.is_compressed:
         raise BTClibValueError("uncompressed public keys are not allowed here")
+    wifs = _FILED_WIFS.get()
+    if key_expression.wif_prefix and wifs is not None:
+        wifs[_pub_key_text(key_expression)] = key
     return key_expression

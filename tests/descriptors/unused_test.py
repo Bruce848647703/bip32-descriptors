@@ -136,12 +136,15 @@ def test_core_unused_cases_parse_to_the_public_spelling(prv: str, pub: str) -> N
     """Both spellings parse to one key, and write the public one back."""
     for descriptor in (prv, pub):
         prv_keys: dict[str, str] = {}
-        parsed = parse(descriptor, prv_keys=prv_keys)
+        wifs: dict[str, str] = {}
+        parsed = parse(descriptor, prv_keys=prv_keys, wifs=wifs)
         assert isinstance(parsed, UnusedDescriptor)
         assert str(parsed) == pub
         assert len(parsed.key_expressions) == 1
-        # `parse` files an xprv, and no WIF
+        # `parse` files an xprv in `prv_keys` and a WIF in `wifs`
         assert bool(prv_keys) == (descriptor == prv and "xprv" in prv)
+        assert bool(wifs) == (descriptor == prv and "xprv" not in prv)
+        assert private_string(parsed, prv_keys, None, wifs) == descriptor
 
 
 @pytest.mark.parametrize("prv, pub, message", CORE_UNPARSABLE)
@@ -189,6 +192,20 @@ def test_normalized_and_private_string_are_what_listdescriptors_writes() -> None
     assert add_checksum(private_string(descriptor, prv_keys)) == (
         f"unused({XPRV}/0h/1)#rcj0e95f"
     )
+
+
+@pytest.mark.parametrize(
+    "descriptor, core",
+    [
+        (f"unused({WIF})", f"unused({WIF})#0rruvc53"),
+        (f"unused([deadbeef/7h]{WIF})", f"unused([deadbeef/7h]{WIF})#q60srfdd"),
+    ],
+)
+def test_a_wif_is_what_listdescriptors_writes(descriptor: str, core: str) -> None:
+    """Core's listdescriptors, with its private flag, writes the WIF back."""
+    wifs: dict[str, str] = {}
+    parsed = parse(descriptor, "regtest", wifs=wifs)
+    assert add_checksum(private_string(parsed, None, None, wifs)) == core
 
 
 def test_no_script_and_no_address() -> None:

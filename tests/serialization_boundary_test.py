@@ -50,6 +50,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from inspect import signature
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -69,6 +70,8 @@ _WRONG_TYPES: tuple[Any, ...] = (None, 1.5, [1, 2])
 # and the same list where `None` is a type the position declares, which is
 # a statement about the signature rather than an exemption from the rule
 _NOT_NONE: tuple[Any, ...] = tuple(w for w in _WRONG_TYPES if w is not None)
+# a mapping `parse` cannot file into, and refuses for that before it reads
+_FILED_IN = ("prv_keys", "preimages", "wifs")
 
 
 @dataclass(frozen=True)
@@ -132,11 +135,13 @@ _MODULE_EXTRA_ARGUMENTS = {
         "network",
         "prv_keys",
         "preimages",
+        "wifs",
     ],
     ("bip32_descriptors.descriptors.miniscript", "parse"): [
         "context",
         "prv_keys",
         "preimages",
+        "wifs",
     ],
 }
 
@@ -256,7 +261,8 @@ def test_a_descriptor_is_parsed_for_a_network_that_exists() -> None:
     of pairs answered "not found" for every key rather than saying it is
     not a mapping. `None` is a type it declares, so it is asserted to
     work rather than driven -- a statement about the signature. The same
-    holds for `preimages`.
+    holds for `preimages` and `wifs`. A read-only mapping is refused for
+    all three, `parse` filing into them.
     """
     descriptor = f"pk({PrvKeyData(1).pub.sec.hex()})"
     assert descriptors.parse(descriptor, "testnet").network == "testnet"
@@ -264,6 +270,8 @@ def test_a_descriptor_is_parsed_for_a_network_that_exists() -> None:
     assert descriptors.parse(descriptor, prv_keys=None).network == "mainnet"
     assert descriptors.parse(descriptor, preimages={}).network == "mainnet"
     assert descriptors.parse(descriptor, preimages=None).network == "mainnet"
+    assert descriptors.parse(descriptor, wifs={}).network == "mainnet"
+    assert descriptors.parse(descriptor, wifs=None).network == "mainnet"
     # and normalized, which is what going through the library's own
     # question buys beyond refusing what is not one
     assert descriptors.parse(descriptor, " TestNet ").network == "testnet"
@@ -276,6 +284,12 @@ def test_a_descriptor_is_parsed_for_a_network_that_exists() -> None:
             descriptors.parse(descriptor, prv_keys=wrong)
         with pytest.raises(BTClibTypeError, match="invalid preimages type"):
             descriptors.parse(descriptor, preimages=wrong)
+        with pytest.raises(BTClibTypeError, match="invalid wifs type"):
+            descriptors.parse(descriptor, wifs=wrong)
+    for name in _FILED_IN:
+        read_only: dict[str, Any] = {name: MappingProxyType({})}
+        with pytest.raises(BTClibTypeError, match=f"invalid {name} type"):
+            descriptors.parse(descriptor, **read_only)
     with pytest.raises(BTClibValueError, match="unknown network"):
         descriptors.parse(descriptor, "mainet")
 
@@ -292,6 +306,7 @@ def test_a_miniscript_is_parsed_in_a_context_that_exists() -> None:
         assert miniscript.parse(expression, context).context == context
     assert miniscript.parse(expression, prv_keys=None).context == miniscript.P2WSH
     assert miniscript.parse(expression, preimages=None).context == miniscript.P2WSH
+    assert miniscript.parse(expression, wifs=None).context == miniscript.P2WSH
 
     for wrong in _WRONG_TYPES:
         with pytest.raises(BTClibTypeError, match="invalid context type"):
@@ -301,6 +316,12 @@ def test_a_miniscript_is_parsed_in_a_context_that_exists() -> None:
             miniscript.parse(expression, prv_keys=wrong)
         with pytest.raises(BTClibTypeError, match="invalid preimages type"):
             miniscript.parse(expression, preimages=wrong)
+        with pytest.raises(BTClibTypeError, match="invalid wifs type"):
+            miniscript.parse(expression, wifs=wrong)
+    for name in _FILED_IN:
+        read_only: dict[str, Any] = {name: MappingProxyType({})}
+        with pytest.raises(BTClibTypeError, match=f"invalid {name} type"):
+            miniscript.parse(expression, **read_only)
     with pytest.raises(BTClibValueError, match="unknown spend context"):
         miniscript.parse(expression, "P2SH")
 

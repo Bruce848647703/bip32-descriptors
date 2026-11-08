@@ -22,7 +22,6 @@ from btclib.key import PrvKeyData
 
 from bip32_descriptors.bip32.bip32 import rootxprv_from_seed, xpub_from_xprv
 from bip32_descriptors.descriptors import (
-    KeyExpression,
     WshDescriptor,
     add_checksum,
     at_index,
@@ -266,41 +265,17 @@ def test_private_string_writes_back_what_the_mappings_name_only() -> None:
     assert private_string(descriptor, {}, {}) == str(descriptor)
 
 
-def test_a_wif_is_written_as_its_public_key() -> None:
-    """`parse` files no WIF in `prv_keys`, so there is none to write back."""
-    prv_keys: dict[str, str] = {}
-    descriptor = parse(f"wpkh({_WIF})", prv_keys=prv_keys)
-    assert not prv_keys
-    assert private_string(descriptor, prv_keys) == str(descriptor)
-
-
-def _has_wif(key: KeyExpression) -> bool:
-    return bool(key.wif_prefix) or any(map(_has_wif, key.participants))
-
-
-def _core_case(private: str) -> Any:
-    keys = parse(private).key_expressions
-    if any(map(_has_wif, keys)):
-        return pytest.param(
-            private,
-            marks=pytest.mark.xfail(
-                reason="no WIF in prv_keys: btclib-org/bip32-descriptors#137",
-                strict=True,
-            ),
-        )
-    return private
-
-
 @pytest.mark.parametrize(
     "private",
-    [_core_case(private) for private, _, _ in CORE_VECTORS],
+    [private for private, _, _ in CORE_VECTORS],
     ids=[vector_id(i, private) for i, (private, _, _) in enumerate(CORE_VECTORS)],
 )
 def test_core_s_private_spelling_is_written_back(private: str) -> None:
     """Bitcoin Core's descriptor_test checks `ToPrivateString` the same way."""
     prv_keys: dict[str, str] = {}
-    descriptor = parse(private, prv_keys=prv_keys)
-    assert private_string(descriptor, prv_keys) == private
+    wifs: dict[str, str] = {}
+    descriptor = parse(private, prv_keys=prv_keys, wifs=wifs)
+    assert private_string(descriptor, prv_keys, None, wifs) == private
 
 
 def test_private_string_refuses_a_wrong_type() -> None:

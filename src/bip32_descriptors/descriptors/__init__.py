@@ -19,9 +19,10 @@ none after:
 `miniscript` is named beside the flat surface because a caller reaches it
 by name -- `miniscript.parse`, `miniscript.from_script` and the
 `Miniscript` a `MiniscriptDescriptor` holds are its own interface, not the
-descriptor one -- while `key_expression` is not: `KeyExpression` and
-`PrvKeys` are re-exported below, being names a caller reads off a parsed
-descriptor. So are `miniscript`'s `Preimages`, for the same reason.
+descriptor one -- while `key_expression` is not: `KeyExpression`,
+`PrvKeys` and `Wifs` are re-exported below, being names a caller reads off
+a parsed descriptor. So are `miniscript`'s `Preimages`, for the same
+reason.
 """
 
 from bip32_descriptors.descriptors import miniscript
@@ -63,7 +64,7 @@ from bip32_descriptors.descriptors.descriptors import (
     wallet_policy_address,
     wallet_policy_descriptor,
 )
-from bip32_descriptors.descriptors.key_expression import KeyExpression, PrvKeys
+from bip32_descriptors.descriptors.key_expression import KeyExpression, PrvKeys, Wifs
 from bip32_descriptors.descriptors.miniscript import Miniscript, Preimages, SpendContext
 
 __all__ = [
@@ -92,6 +93,7 @@ __all__ = [
     "SpendContext",
     "TrDescriptor",
     "UnusedDescriptor",
+    "Wifs",
     "WpkhDescriptor",
     "WshDescriptor",
     "add_checksum",

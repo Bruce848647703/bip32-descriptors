@@ -75,7 +75,7 @@ BIP379: https://github.com/bitcoin/bips/blob/master/bip-0379.md
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import SupportsIndex, TypeVar
@@ -114,6 +114,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _offered_signature,
     _parse_key,
     _split_arguments,
+    _wifs_filed_in,
 )
 
 __all__ = [
@@ -2230,7 +2231,7 @@ def _read_key_fragment(
     name: str,
     argument: str,
     context: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
 ) -> Miniscript:
     """Return the node of a fragment whose argument is a KEY expression.
 
@@ -2275,7 +2276,7 @@ def _read_multi(
     name: str,
     argument: str,
     context: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
 ) -> Miniscript:
     """Return the node of a ``multi()`` or a ``multi_a()``: a k and keys.
 
@@ -2345,7 +2346,7 @@ def _int64_read_as_core(text: str) -> int | None:
 
 
 def _read_keys_as_core(
-    threshold: str, keys: list[str], context: str, prv_keys: dict[str, str]
+    threshold: str, keys: list[str], context: str, prv_keys: MutableMapping[str, str]
 ) -> None:
     """Read the keys of a multisig in its own context, as Core splits them.
 
@@ -2365,7 +2366,7 @@ def _read_keys_as_core(
 
 
 def _read_unclosed_multisig_keys(
-    fragment: str, context: str, prv_keys: dict[str, str]
+    fragment: str, context: str, prv_keys: MutableMapping[str, str]
 ) -> None:
     """Read the keys Core reads in a multisig with no closing parenthesis.
 
@@ -2414,7 +2415,7 @@ def _read_number(name: str, argument: str) -> int:
 
 
 def _read_preimage(
-    name: str, text: str, context: str, preimages: dict[bytes, bytes]
+    name: str, text: str, context: str, preimages: MutableMapping[bytes, bytes]
 ) -> Miniscript:
     """Return the node of a hash fragment read from ``preimage(HEX)``.
 
@@ -2439,8 +2440,8 @@ def _read_leaf(
     name: str,
     argument: str,
     context: str,
-    prv_keys: dict[str, str],
-    preimages: dict[bytes, bytes],
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
 ) -> Miniscript:
     """Return the node of a fragment whose arguments are not subexpressions."""
     if name in _KEY_FRAGMENTS:
@@ -2489,8 +2490,8 @@ def _read_fragment(
     to_parse: list[tuple[str, int, int]],
     built: _Built,
     context: str,
-    prv_keys: dict[str, str],
-    preimages: dict[bytes, bytes],
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
 ) -> int:
     """Read one fragment, building it or stacking what its arguments need."""
     name, pos = _read_name(expression, pos)
@@ -2528,8 +2529,8 @@ def _read_leaf_fragment(
     pos: int,
     built: _Built,
     context: str,
-    prv_keys: dict[str, str],
-    preimages: dict[bytes, bytes],
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
 ) -> int:
     """Read a fragment with no subexpression, and build it."""
     own = "multi_a" if context == TAPSCRIPT else "multi"
@@ -2608,8 +2609,9 @@ def _assert_no_trailing_text(expression: str, pos: int, built: _Built) -> None:
 def parse(
     expression: str,
     context: str = P2WSH,
-    prv_keys: dict[str, str] | None = None,
-    preimages: dict[bytes, bytes] | None = None,
+    prv_keys: MutableMapping[str, str] | None = None,
+    preimages: MutableMapping[bytes, bytes] | None = None,
+    wifs: MutableMapping[str, str] | None = None,
 ) -> Miniscript:
     """Return the Miniscript of a BIP379 expression, in its context.
 
@@ -2623,28 +2625,41 @@ def parse(
     key is filed in, under the extended public key that replaces it, so
     that what a parsed expression holds is public. `preimages` is the
     same for a hash fragment's ``preimage(HEX)``, filed under its digest,
-    as the module docstring says. What either mapping was filed with stays
-    in it where the expression is then refused.
+    as the module docstring says, and `wifs` for a WIF, filed as
+    `descriptors.parse` files one. What a mapping was filed with stays in
+    it where the expression is then refused.
 
     A `str`, a BIP379 expression being text, and refused as a type for
     the reason `descriptors.parse` gives: what was neither reached the
     slicing below and left as "object of type X has no len()".
 
-    The context is one of the two BIP379 has, and `prv_keys` a mapping
-    or `None`, as `descriptors.parse` asks for the same pair: a context
-    no fragment table knows was compared against `TAPSCRIPT`, found
-    unequal, and every rule then read as the p2wsh one, so an expression
-    was type-checked under a context that does not exist.
+    The context is one of the two BIP379 has, and `prv_keys` a mutable
+    mapping or `None`, as `descriptors.parse` asks for the same pair: a
+    context no fragment table knows was compared against `TAPSCRIPT`,
+    found unequal, and every rule then read as the p2wsh one, so an
+    expression was type-checked under a context that does not exist.
     """
     assert_type(expression, str, "miniscript")
     _assert_valid_context(context)
-    assert_type(prv_keys, (Mapping, type(None)), "prv_keys")
-    assert_type(preimages, (Mapping, type(None)), "preimages")
+    assert_type(prv_keys, (MutableMapping, type(None)), "prv_keys")
+    assert_type(preimages, (MutableMapping, type(None)), "preimages")
+    assert_type(wifs, (MutableMapping, type(None)), "wifs")
 
     if prv_keys is None:
         prv_keys = {}
     if preimages is None:
         preimages = {}
+    with _wifs_filed_in({} if wifs is None else wifs):
+        return _read_expression(expression, context, prv_keys, preimages)
+
+
+def _read_expression(
+    expression: str,
+    context: str,
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
+) -> Miniscript:
+    """Return the Miniscript of a BIP379 expression, as `parse` refuses it."""
     to_parse: list[tuple[str, int, int]] = [(_WRAPPED_EXPR, 0, 0)]
     built = _Built(context)
     pos = 0
