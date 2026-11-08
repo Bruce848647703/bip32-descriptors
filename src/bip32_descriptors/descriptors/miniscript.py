@@ -110,6 +110,7 @@ from bip32_descriptors.bip32.der_path import _int_from_digits
 from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
     PrvKeys,
+    _assert_outside_taproot,
     _assert_prv_keys,
     _offered_signature,
     _parse_key,
@@ -1201,7 +1202,13 @@ class Miniscript:
         self._assert_number()
 
     def _assert_keys(self) -> None:
-        """Refuse the keys no fragment holds, and the ones a context forbids."""
+        """Refuse the keys no fragment holds, and the ones a context forbids.
+
+        A P2WSH node refuses a ``musig()`` key and an x-only one, with
+        `parse`'s message, since its text would not parse back. A
+        ``musig()`` key would also want an ECDSA signature, which a MuSig2
+        group does not make (BIP327).
+        """
         fragment = self.fragment
         keys = len(self.keys)
         if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != (
@@ -1218,6 +1225,9 @@ class Miniscript:
             allowed = keys == 0
         if not allowed:
             raise BTClibValueError(f"invalid number of keys in {fragment}: {keys}")
+        if self.context == P2WSH:
+            for key in self.keys:
+                _assert_outside_taproot(key)
 
     def _assert_number(self) -> None:
         """Refuse a lock time or a threshold outside its bounds."""

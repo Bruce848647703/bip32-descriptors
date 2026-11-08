@@ -848,16 +848,18 @@ def _key_origin(description: str) -> tuple[BIP32KeyOrigin, str]:
     return BIP32KeyOrigin(fingerprint, _der_path(steps)), _hardening(path)
 
 
+# "inside tr()" would not be true of every position that refuses one: a
+# musig() participant is inside a tr() and is aggregated as a point, so it
+# needs the byte an x-only key drops
+_X_ONLY_REFUSED = "x-only public keys are allowed in a taproot key expression only"
+
+
 def _pub_key_from_hex(key: str, *, x_only: bool) -> tuple[bytes, bool]:
     """Return the SEC bytes of a hex key, and whether it was x-only."""
     length = len(key)
     if length == 64:
         if not x_only:
-            # "inside tr()" would not be true of every position that
-            # refuses one: a musig() participant is inside a tr() and is
-            # aggregated as a point, so it needs the byte an x-only key drops
-            err_msg = "x-only public keys are allowed in a taproot key expression only"
-            raise BTClibValueError(err_msg)
+            raise BTClibValueError(_X_ONLY_REFUSED)
         # the even-y lift of BIP340, which is what an x-only key means
         pub_key = b"\x02" + bytes_from_octets(key)
     elif length in {66, 130}:
@@ -948,6 +950,17 @@ def _assert_musig_allowed(*, musig_allowed: bool) -> None:
     """
     if not musig_allowed:
         raise BTClibValueError("musig() is only allowed in tr() and rawtr()")
+
+
+def _assert_outside_taproot(key: KeyExpression) -> None:
+    """Refuse a key `parse` reads in taproot only, with `parse`'s message.
+
+    A ``musig()``, and an x-only key.
+    """
+    if key.is_aggregate:
+        _assert_musig_allowed(musig_allowed=False)
+    if key.x_only:
+        raise BTClibValueError(_X_ONLY_REFUSED)
 
 
 # Bitcoin Core's own message, refusing a key path with two multipath steps

@@ -8,11 +8,12 @@ A field of the wrong type, in every `Descriptor` fragment and in a
 `MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`,
 `MiniscriptDescriptor`, `UnusedDescriptor` and `MultiA` also refuse a
 value `parse` refuses, as a `BTClibValueError`, and every fragment
-holding a key that `parse` reads outside ``tr()`` and ``rawtr()``
-refuses a ``musig()`` one. Issues btclib-org/bip32-descriptors#46,
-btclib-org/bip32-descriptors#85, btclib-org/bip32-descriptors#103,
-btclib-org/bip32-descriptors#119, btclib-org/bip32-descriptors#134 and
-btclib-org/bip32-descriptors#150.
+holding a key that `parse` reads outside ``tr()`` and ``rawtr()``, and a
+P2WSH `Miniscript` node, refuses a ``musig()`` one and an x-only one.
+Issues btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
+btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
+btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#150,
+btclib-org/bip32-descriptors#159 and btclib-org/bip32-descriptors#161.
 """
 
 from __future__ import annotations
@@ -642,61 +643,69 @@ def test_a_fragment_field_of_another_type_is_refused(
 (_RANGED_KEY,) = parse(f"wpkh({rootxprv_from_seed('00' * 32)}/*)").key_expressions
 
 
-@pytest.mark.parametrize(
-    "key,err_msg",
-    [
-        (_KEY, "^x-only public keys are allowed in a taproot key expression only$"),
-        (_RANGED_KEY, r"^unused\(\): key cannot be ranged$"),
-    ],
-    ids=["x-only", "ranged"],
-)
-def test_an_unused_key_parse_refuses_is_refused_when_built(
-    key: Any, err_msg: str
-) -> None:
+def test_an_unused_ranged_key_is_refused_when_built() -> None:
     """Built directly or by `replace`, with the message `parse` gives."""
     parsed = _PARSED[UnusedDescriptor]
     assert isinstance(parsed, UnusedDescriptor)
+    err_msg = r"^unused\(\): key cannot be ranged$"
     with pytest.raises(BTClibValueError, match=err_msg):
-        UnusedDescriptor(key)
+        UnusedDescriptor(_RANGED_KEY)
     with pytest.raises(BTClibValueError, match=err_msg):
-        replace(parsed, key=key)
+        replace(parsed, key=_RANGED_KEY)
 
 
 (_MUSIG,) = parse(f"tr(musig({_K},{_K2}))").key_expressions
 (_C_KEY,) = parse(f"pk({_C})").key_expressions
-_M = str(_MUSIG)
-_MUSIG_REFUSED = r"^key \d+: musig\(\) is only allowed in tr\(\) and rawtr\(\)$"
+# each key `parse` reads in taproot only, its text, and the refusal
+# `miniscript.parse` gives elsewhere
+_TAPROOT_ONLY = [
+    (_MUSIG, str(_MUSIG), r"musig\(\) is only allowed in tr\(\) and rawtr\(\)"),
+    (_KEY, _X, "x-only public keys are allowed in a taproot key expression only"),
+]
+_TAPROOT_ONLY_IDS = ["musig", "x-only"]
+# P2WSH miniscripts whose last key is the one `{}` stands for
+_P2WSH_HOLDING = ["pk({})", "pkh({})", f"multi(1,{_C},{{}})"]
 
 
-def _checked(fragment: str) -> miniscript.Miniscript:
-    """Return ``c:`` over a P2WSH `fragment` of the ``musig()`` key."""
-    node = miniscript.Miniscript(fragment, miniscript.P2WSH, keys=(_MUSIG,))
-    return miniscript.Miniscript("c:", miniscript.P2WSH, (node,))
+def _key_holder(node: miniscript.Miniscript) -> miniscript.Miniscript:
+    """Return the node of `_P2WSH_HOLDING` that holds the keys."""
+    return node if node.keys else node.subs[0]
 
 
-# (fragment, field, a value holding a musig() key, the text `parse` refuses)
-_MUSIG_FIELDS: list[tuple[type[Descriptor], str, Any, str]] = [
-    (PkDescriptor, "key", _MUSIG, f"pk({_M})"),
-    (PkhDescriptor, "key", _MUSIG, f"pkh({_M})"),
-    (WpkhDescriptor, "key", _MUSIG, f"wpkh({_M})"),
-    (ComboDescriptor, "key", _MUSIG, f"combo({_M})"),
-    (UnusedDescriptor, "key", _MUSIG, f"unused({_M})"),
-    (MultiDescriptor, "keys", (_MUSIG, _C_KEY), f"multi(1,{_M},{_C})"),
-    (MultiDescriptor, "keys", (_C_KEY, _MUSIG), f"multi(1,{_C},{_M})"),
-    (MiniscriptDescriptor, "node", _checked("pk_k"), f"wsh(pk({_M}))"),
-    (MiniscriptDescriptor, "node", _checked("pk_h"), f"wsh(pkh({_M}))"),
-    (
-        MiniscriptDescriptor,
-        "node",
-        miniscript.Miniscript(
-            "multi", miniscript.P2WSH, keys=(_C_KEY, _MUSIG), threshold=1
-        ),
-        f"wsh(multi(1,{_C},{_M}))",
+def _node_holding(expression: str, key: Any) -> miniscript.Miniscript:
+    """Return the P2WSH `expression` of `_C2` with `key` in its place.
+
+    In an unpickled copy, which skips `Miniscript`'s own check of the
+    keys, so that what is reached is `MiniscriptDescriptor`'s.
+    """
+    node = _unpickled(miniscript.parse(expression.format(_C2)))
+    holder = _key_holder(node)
+    object.__setattr__(holder, "keys", (*holder.keys[:-1], key))
+    return node
+
+
+# (fragment, field, its value made to hold `key`, the text `parse` refuses)
+_TAPROOT_ONLY_FIELDS: list[tuple[type[Descriptor], str, Callable[[Any], Any], str]] = [
+    (PkDescriptor, "key", lambda key: key, "pk({})"),
+    (PkhDescriptor, "key", lambda key: key, "pkh({})"),
+    (WpkhDescriptor, "key", lambda key: key, "wpkh({})"),
+    (ComboDescriptor, "key", lambda key: key, "combo({})"),
+    (UnusedDescriptor, "key", lambda key: key, "unused({})"),
+    (MultiDescriptor, "keys", lambda key: (key, _C_KEY), f"multi(1,{{}},{_C})"),
+    (MultiDescriptor, "keys", lambda key: (_C_KEY, key), f"multi(1,{_C},{{}})"),
+    *(
+        (
+            MiniscriptDescriptor,
+            "node",
+            lambda key, expression=expression: _node_holding(expression, key),
+            f"wsh({expression})",
+        )
+        for expression in _P2WSH_HOLDING
     ),
 ]
 
 
-def test_every_fragment_holding_a_key_is_tried_with_a_musig_one() -> None:
+def test_every_fragment_holding_a_key_is_tried_with_a_taproot_only_one() -> None:
     """The census: a key `tr()` and `rawtr()` take, every other refuses."""
     holding = {
         cls
@@ -704,33 +713,84 @@ def test_every_fragment_holding_a_key_is_tried_with_a_musig_one() -> None:
         for f in fields(cls)
         if any(name in str(f.type) for name in ("KeyExpression", "Miniscript"))
     }
-    tried = {cls for cls, _, _, _ in _MUSIG_FIELDS}
+    tried = {cls for cls, _, _, _ in _TAPROOT_ONLY_FIELDS}
     assert holding == tried | {TrDescriptor, RawTrDescriptor}
 
 
+@pytest.mark.parametrize("key,spelling,refusal", _TAPROOT_ONLY, ids=_TAPROOT_ONLY_IDS)
 @pytest.mark.parametrize(
-    "cls,name,value,text",
-    _MUSIG_FIELDS,
-    ids=[f"{c.__name__}-{t.partition('(')[0]}-{n}" for c, n, _, t in _MUSIG_FIELDS],
+    "cls,name,value,template",
+    _TAPROOT_ONLY_FIELDS,
+    ids=[
+        f"{c.__name__}-{t.replace(_C, 'C')}-{n}" for c, n, _, t in _TAPROOT_ONLY_FIELDS
+    ],
 )
-def test_a_musig_key_outside_tr_is_refused_when_built(
-    cls: type[Descriptor], name: str, value: Any, text: str
+def test_a_taproot_only_key_outside_tr_is_refused_when_built(
+    cls: type[Descriptor],
+    name: str,
+    value: Callable[[Any], Any],
+    template: str,
+    key: Any,
+    spelling: str,
+    refusal: str,
 ) -> None:
     """Built directly or by `replace`, with the message `parse` gives.
 
-    A p2wpkh or p2pkh script of the aggregate key wants an ECDSA
-    signature, and what a MuSig2 group makes is a BIP340 one, BIP327 says.
-    Issue btclib-org/bip32-descriptors#150.
+    Its text would not parse back. A p2wpkh or p2pkh script of a
+    ``musig()`` key also wants an ECDSA signature, and what a MuSig2 group
+    makes is a BIP340 one, BIP327 says. Issues
+    btclib-org/bip32-descriptors#150 and btclib-org/bip32-descriptors#161.
     """
-    with pytest.raises(BTClibValueError, match=_MUSIG_REFUSED) as by_parse:
-        parse(text)
+    match = rf"^key \d+: {refusal}$"
+    with pytest.raises(BTClibValueError, match=match) as by_parse:
+        parse(template.format(spelling))
     err_msg = f"^{re.escape(str(by_parse.value))}$"
     parsed = _PARSED[cls]
     fixed = {f.name: getattr(parsed, f.name) for f in fields(cls)}
     with pytest.raises(BTClibValueError, match=err_msg):
-        cls(**{**fixed, name: value})
+        cls(**{**fixed, name: value(key)})
     with pytest.raises(BTClibValueError, match=err_msg):
-        replace(parsed, **{name: value})
+        replace(parsed, **{name: value(key)})
+
+
+@pytest.mark.parametrize("key,spelling,refusal", _TAPROOT_ONLY, ids=_TAPROOT_ONLY_IDS)
+@pytest.mark.parametrize(
+    "expression", _P2WSH_HOLDING, ids=[e.replace(_C, "C") for e in _P2WSH_HOLDING]
+)
+def test_a_p2wsh_node_holding_a_taproot_only_key_is_refused_when_built(
+    expression: str, key: Any, spelling: str, refusal: str
+) -> None:
+    """Built directly or by `replace`, with `miniscript.parse`'s message.
+
+    Issues btclib-org/bip32-descriptors#159 and
+    btclib-org/bip32-descriptors#161.
+    """
+    with pytest.raises(BTClibValueError, match=f"^{refusal}$") as by_parse:
+        miniscript.parse(expression.format(spelling))
+    err_msg = f"^{re.escape(str(by_parse.value))}$"
+    holder = _key_holder(miniscript.parse(expression.format(_C2)))
+    keys = (*holder.keys[:-1], key)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        miniscript.Miniscript(
+            holder.fragment, miniscript.P2WSH, keys=keys, threshold=holder.threshold
+        )
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(holder, keys=keys)
+
+
+@pytest.mark.parametrize(
+    "key,spelling", [case[:2] for case in _TAPROOT_ONLY], ids=_TAPROOT_ONLY_IDS
+)
+def test_a_tapscript_node_holding_a_taproot_only_key_is_built(
+    key: Any, spelling: str
+) -> None:
+    """The control: the node `miniscript.parse` reads there."""
+    node = miniscript.Miniscript(
+        "c:",
+        miniscript.TAPSCRIPT,
+        (miniscript.Miniscript("pk_k", miniscript.TAPSCRIPT, keys=(key,)),),
+    )
+    assert miniscript.parse(f"pk({spelling})", miniscript.TAPSCRIPT) == node
 
 
 def test_a_musig_key_inside_tr_is_built() -> None:
