@@ -428,18 +428,24 @@ private form alone, which are `HARDENED_PUBLIC` there, and the `rawtr()`
 cases. BIP394 publishes the one whose key is a WIF, as its second
 vector; the ranged one, under an xprv, is Core's own.
 
+`tests/descriptors/unused_test.py` holds every case of the
+`unused_descriptor_test` case, transcribed from the file at that commit:
+its `CheckUnused` cases as `CORE_UNUSED`, and its `CheckUnparsable` and
+`CheckSingleUnparsable` cases as `CORE_UNPARSABLE`, with the messages
+`parse` gives.
+
 Not vendored as a file because there is no file: the values are literals
 in C++ source, so a copy of it would be a copy of a test program. What
-this pin buys instead is the upstream re-check: a case added to that
-function moves the commit, and the weekly run says so.
+this pin buys instead is the upstream re-check: a case added to the
+file moves the commit, and the weekly run says so.
 
 The subset is deliberate and is what a refresh would revisit: Core's file
-also holds `CheckUnparsable` cases, which this module has as `UNPARSABLE`
-and `CORE_UNPARSABLE` with btclib's own messages, and `musig()` cases.
-Those BIP390 publishes are transcribed from the BIP itself above rather
-than from here; those it does not -- `rawtr(musig(...))` among them -- are
-transcribed from neither. Matched against the file as it stood on
-2026-08-06.
+also holds `CheckUnparsable` cases, which `descriptors_test.py` has as
+`UNPARSABLE` and `CORE_UNPARSABLE` with btclib's own messages, and
+`musig()` cases. Those BIP390 publishes are transcribed from the BIP
+itself above rather than from here; those it does not --
+`rawtr(musig(...))` among them -- are transcribed from neither. Matched
+against the file as it stood on 2026-08-06.
 
 The cases upstream added after that comparison, other than
 bitcoin/bitcoin#35819's below, are not here, and

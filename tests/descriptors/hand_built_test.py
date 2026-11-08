@@ -5,9 +5,10 @@
 """What `parse` never builds is refused when a descriptor is built by hand.
 
 A field of the wrong type, in every `Descriptor` fragment and in a
-`MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor` and `MultiA` also
-refuse a value `parse` refuses, as a `BTClibValueError`. Issues
-btclib-org/bip32-descriptors#46 and btclib-org/bip32-descriptors#103.
+`MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`, `UnusedDescriptor`
+and `MultiA` also refuse a value `parse` refuses, as a `BTClibValueError`.
+Issues btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#103
+and btclib-org/bip32-descriptors#134.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
 
+from bip32_descriptors.bip32 import rootxprv_from_seed
 from bip32_descriptors.descriptors import miniscript, parse
 from bip32_descriptors.descriptors.descriptors import (
     AddrDescriptor,
@@ -36,6 +38,7 @@ from bip32_descriptors.descriptors.descriptors import (
     RawTrDescriptor,
     ShDescriptor,
     TrDescriptor,
+    UnusedDescriptor,
     WpkhDescriptor,
     WshDescriptor,
 )
@@ -242,6 +245,7 @@ _PARSED: dict[type[Descriptor], Descriptor] = {
         parse(f"rawpkh({'00' * 20})"),
         parse(f"tr({_X})"),
         parse(f"rawtr({_X})"),
+        parse(f"unused({_K})"),
     )
 }
 _KEY_FIELD_CLASSES = (
@@ -250,6 +254,7 @@ _KEY_FIELD_CLASSES = (
     WpkhDescriptor,
     ComboDescriptor,
     RawTrDescriptor,
+    UnusedDescriptor,
 )
 # (fragment, field, a value of the wrong type, the name the refusal gives)
 _WRONG: list[tuple[type[Descriptor], str, Any, str]] = [
@@ -326,3 +331,27 @@ def test_a_fragment_field_of_another_type_is_refused(
     err_msg = f"^invalid {what} type: "
     with pytest.raises(BTClibTypeError, match=err_msg):
         replace(_PARSED[cls], **{name: value})
+
+
+# a ranged key, which `parse` takes in wpkh() and refuses in unused()
+(_RANGED_KEY,) = parse(f"wpkh({rootxprv_from_seed('00' * 32)}/*)").key_expressions
+
+
+@pytest.mark.parametrize(
+    "key,err_msg",
+    [
+        (_KEY, "^x-only public keys are allowed in a taproot key expression only$"),
+        (_RANGED_KEY, r"^unused\(\): key cannot be ranged$"),
+    ],
+    ids=["x-only", "ranged"],
+)
+def test_an_unused_key_parse_refuses_is_refused_when_built(
+    key: Any, err_msg: str
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives."""
+    parsed = _PARSED[UnusedDescriptor]
+    assert isinstance(parsed, UnusedDescriptor)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        UnusedDescriptor(key)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, key=key)

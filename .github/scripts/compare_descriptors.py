@@ -82,8 +82,9 @@ class Verdict:
     """What one parser made of one input.
 
     `scripts` is empty where the parser does not derive scripts, as Core,
-    or where the derivation failed; `addresses` is empty where none was
-    given. `note` is the error of a refusal or of a derivation.
+    where the derivation failed, or where the descriptor describes none;
+    `addresses` is empty where none was given. `note` is the error of a
+    refusal or of a derivation.
     """
 
     accepted: bool
