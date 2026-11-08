@@ -7,15 +7,18 @@
 A field of the wrong type, in every `Descriptor` fragment and in a
 `MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`,
 `MiniscriptDescriptor`, `UnusedDescriptor` and `MultiA` also refuse a
-value `parse` refuses, as a `BTClibValueError`. Issues
-btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
-btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119 and
-btclib-org/bip32-descriptors#134.
+value `parse` refuses, as a `BTClibValueError`, and every fragment
+holding a key that `parse` reads outside ``tr()`` and ``rawtr()``
+refuses a ``musig()`` one. Issues btclib-org/bip32-descriptors#46,
+btclib-org/bip32-descriptors#85, btclib-org/bip32-descriptors#103,
+btclib-org/bip32-descriptors#119, btclib-org/bip32-descriptors#134 and
+btclib-org/bip32-descriptors#150.
 """
 
 from __future__ import annotations
 
 import pickle
+import re
 from collections.abc import Callable
 from dataclasses import fields, replace
 from typing import Any
@@ -657,3 +660,85 @@ def test_an_unused_key_parse_refuses_is_refused_when_built(
         UnusedDescriptor(key)
     with pytest.raises(BTClibValueError, match=err_msg):
         replace(parsed, key=key)
+
+
+(_MUSIG,) = parse(f"tr(musig({_K},{_K2}))").key_expressions
+(_C_KEY,) = parse(f"pk({_C})").key_expressions
+_M = str(_MUSIG)
+_MUSIG_REFUSED = r"^key \d+: musig\(\) is only allowed in tr\(\) and rawtr\(\)$"
+
+
+def _checked(fragment: str) -> miniscript.Miniscript:
+    """Return ``c:`` over a P2WSH `fragment` of the ``musig()`` key."""
+    node = miniscript.Miniscript(fragment, miniscript.P2WSH, keys=(_MUSIG,))
+    return miniscript.Miniscript("c:", miniscript.P2WSH, (node,))
+
+
+# (fragment, field, a value holding a musig() key, the text `parse` refuses)
+_MUSIG_FIELDS: list[tuple[type[Descriptor], str, Any, str]] = [
+    (PkDescriptor, "key", _MUSIG, f"pk({_M})"),
+    (PkhDescriptor, "key", _MUSIG, f"pkh({_M})"),
+    (WpkhDescriptor, "key", _MUSIG, f"wpkh({_M})"),
+    (ComboDescriptor, "key", _MUSIG, f"combo({_M})"),
+    (UnusedDescriptor, "key", _MUSIG, f"unused({_M})"),
+    (MultiDescriptor, "keys", (_MUSIG, _C_KEY), f"multi(1,{_M},{_C})"),
+    (MultiDescriptor, "keys", (_C_KEY, _MUSIG), f"multi(1,{_C},{_M})"),
+    (MiniscriptDescriptor, "node", _checked("pk_k"), f"wsh(pk({_M}))"),
+    (MiniscriptDescriptor, "node", _checked("pk_h"), f"wsh(pkh({_M}))"),
+    (
+        MiniscriptDescriptor,
+        "node",
+        miniscript.Miniscript(
+            "multi", miniscript.P2WSH, keys=(_C_KEY, _MUSIG), threshold=1
+        ),
+        f"wsh(multi(1,{_C},{_M}))",
+    ),
+]
+
+
+def test_every_fragment_holding_a_key_is_tried_with_a_musig_one() -> None:
+    """The census: a key `tr()` and `rawtr()` take, every other refuses."""
+    holding = {
+        cls
+        for cls in _PARSED
+        for f in fields(cls)
+        if any(name in str(f.type) for name in ("KeyExpression", "Miniscript"))
+    }
+    tried = {cls for cls, _, _, _ in _MUSIG_FIELDS}
+    assert holding == tried | {TrDescriptor, RawTrDescriptor}
+
+
+@pytest.mark.parametrize(
+    "cls,name,value,text",
+    _MUSIG_FIELDS,
+    ids=[f"{c.__name__}-{t.partition('(')[0]}-{n}" for c, n, _, t in _MUSIG_FIELDS],
+)
+def test_a_musig_key_outside_tr_is_refused_when_built(
+    cls: type[Descriptor], name: str, value: Any, text: str
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    A p2wpkh or p2pkh script of the aggregate key wants an ECDSA
+    signature, and what a MuSig2 group makes is a BIP340 one, BIP327 says.
+    Issue btclib-org/bip32-descriptors#150.
+    """
+    with pytest.raises(BTClibValueError, match=_MUSIG_REFUSED) as by_parse:
+        parse(text)
+    err_msg = f"^{re.escape(str(by_parse.value))}$"
+    parsed = _PARSED[cls]
+    fixed = {f.name: getattr(parsed, f.name) for f in fields(cls)}
+    with pytest.raises(BTClibValueError, match=err_msg):
+        cls(**{**fixed, name: value})
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, **{name: value})
+
+
+def test_a_musig_key_inside_tr_is_built() -> None:
+    """The control: the same key where `parse` gives one, read back."""
+    leaf = miniscript.parse(f"pkh({_MUSIG})", miniscript.TAPSCRIPT)
+    for descriptor in (
+        TrDescriptor(_MUSIG, leaf),
+        TrDescriptor(_KEY, MultiA(1, (_MUSIG,))),
+        RawTrDescriptor(_MUSIG),
+    ):
+        assert parse(str(descriptor)) == descriptor

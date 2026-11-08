@@ -1499,6 +1499,19 @@ class Descriptor(ABC):
         return hd_key_paths
 
 
+def _assert_no_musig(keys: Iterable[KeyExpression]) -> None:
+    """Refuse a ``musig()`` key, which ``tr()`` and ``rawtr()`` alone take.
+
+    The message is `parse`'s, which names the key by its index in `keys`.
+    """
+    for position, key in enumerate(keys):
+        if key.is_aggregate:
+            try:
+                _assert_musig_allowed(musig_allowed=False)
+            except BTClibValueError as e:
+                raise BTClibValueError(f"key {position}: {e}") from None
+
+
 @dataclass(frozen=True)
 class PkDescriptor(Descriptor):
     """``pk(KEY)``: a P2PK output, BIP381."""
@@ -1509,6 +1522,7 @@ class PkDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
+        _assert_no_musig((self.key,))
 
     @override
     def __str__(self) -> str:
@@ -1552,6 +1566,7 @@ class PkhDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
+        _assert_no_musig((self.key,))
 
     @override
     def __str__(self) -> str:
@@ -1594,6 +1609,7 @@ class WpkhDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
+        _assert_no_musig((self.key,))
 
     @override
     def __str__(self) -> str:
@@ -1804,9 +1820,10 @@ class MiniscriptDescriptor(Descriptor):
     more than a mapping of public keys to signatures, so `satisfy` refuses
     and says so.
 
-    A miniscript any of whose nodes is not of the P2WSH context is refused
-    when built, and so is one `parse` refuses without `prv_keys`, since
-    the descriptor would not parse back from its text.
+    A miniscript any of whose nodes is not of the P2WSH context, or that
+    holds a ``musig()`` key, is refused when built, and so is one `parse`
+    refuses without `prv_keys`, since the descriptor would not parse back
+    from its text.
     """
 
     node: Miniscript
@@ -1816,6 +1833,7 @@ class MiniscriptDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.node, Miniscript, "miniscript")
         _assert_p2wsh(self.node)
+        _assert_no_musig(self.node.key_expressions)
         if not _SANE_BY_PARSE.get():
             _assert_sane_script(self.node)
 
@@ -1878,6 +1896,7 @@ class MultiDescriptor(Descriptor):
         for key in self.keys:
             assert_type(key, KeyExpression, "key")
         assert_type(self.sort, bool, "sort")
+        _assert_no_musig(self.keys)
 
     @override
     def __str__(self) -> str:
@@ -1960,6 +1979,7 @@ class ComboDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
+        _assert_no_musig((self.key,))
 
     @override
     def __str__(self) -> str:
@@ -2603,6 +2623,7 @@ class UnusedDescriptor(Descriptor):
         assert_type(self.key, KeyExpression, "key")
         # what `parse` refuses, refused when it is built by hand too, so
         # that `str` writes a descriptor `parse` reads back
+        _assert_no_musig((self.key,))
         if self.key.x_only:
             err_msg = "x-only public keys are allowed in a taproot key expression only"
             raise BTClibValueError(err_msg)
