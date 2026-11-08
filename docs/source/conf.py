@@ -69,20 +69,44 @@ extensions = [
 # nobody. Without the extension it is an unknown directive, which -W turns
 # into a failed build -- the open questions belong in the issue tracker
 
+# the ecc release uv.lock pins, read from the lock as the release above is
+# from pyproject.toml, so that a lock bump moves the ecc inventory below
+# with no edit here. ecc's `latest` docs follow its main branch, which can
+# rename what the pinned release defines (issue #160). Read the Docs
+# builds each ecc tag under the tag's name, `v` and the version
+[ECC_VERSION] = [
+    package["version"]
+    for package in tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))[
+        "package"
+    ]
+    if package["name"] == "ecc"
+]
+# the btclib release uv.lock pins, the same way and for the same reason
+[BTCLIB_VERSION] = [
+    package["version"]
+    for package in tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))[
+        "package"
+    ]
+    if package["name"] == "btclib"
+]
+
 # the standard library, and the siblings this package depends on, whose
-# types its signatures name. `latest` for each, being the build of that
-# sibling's main: a name a sibling removed is the break a build here
-# should report
+# types its signatures name
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", (None, "_inventories/python.inv")),
-    "btclib": ("https://btclib.readthedocs.io/en/latest/", None),
-    "ecc": ("https://btclib-ecc.readthedocs.io/en/latest/", None),
+    "btclib": (
+        f"https://btclib.readthedocs.io/en/v{BTCLIB_VERSION}",
+        (None, "_inventories/btclib.inv"),
+    ),
+    "ecc": (
+        f"https://btclib-ecc.readthedocs.io/en/v{ECC_VERSION}",
+        (None, "_inventories/ecc.inv"),
+    ),
 }
-# no reuse of a fetched inventory: sphinx keeps one for as many days as
-# this allows, invisibly to a diff and even under -E, and a sibling's
-# `latest` moves on this organization's own landings, so a name it removed
-# would still resolve on a checkout and fail on a runner. Section 2 of the
-# organization's standard asks for 0 where a mapping names a sibling
+# no reuse of a fetched inventory: in a reused doctree directory sphinx
+# keeps one per mapping name, so a changed ecc or btclib URL would still
+# read the old one. Section 2 of the organization's standard asks for 0
+# where a mapping names a sibling
 intersphinx_cache_limit = 0
 # `_inventories/python.inv` is a copy of Python 3.14's inventory and no
 # cache: sphinx reads it only when `docs.python.org` fails, so a live site
@@ -91,6 +115,16 @@ intersphinx_cache_limit = 0
 # To refresh it, run this from the repository root and rewrite the version
 # and source above:
 # curl -fsSL -o docs/source/_inventories/python.inv https://docs.python.org/3/objects.inv
+# `_inventories/ecc.inv` is the same for ecc: a copy of the inventory that
+# https://btclib-ecc.readthedocs.io/en/v2026.11.6/objects.inv served on
+# 2026-11-08, read only when that site fails. To refresh it, run this from
+# the repository root, with the version uv.lock pins, and rewrite the
+# version and date:
+# curl -fsSL -o docs/source/_inventories/ecc.inv https://btclib-ecc.readthedocs.io/en/v<version>/objects.inv
+# `_inventories/btclib.inv` is the same for btclib: a copy of the inventory
+# that https://btclib.readthedocs.io/en/v2026.11.2/objects.inv served on
+# 2026-11-08, refreshed the same way:
+# curl -fsSL -o docs/source/_inventories/btclib.inv https://btclib.readthedocs.io/en/v<version>/objects.inv
 
 # what the mapping above does not answer for, one shape no inventory can
 # fix: a subscripted generic written inline in a signature --
