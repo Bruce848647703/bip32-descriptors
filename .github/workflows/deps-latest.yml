@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   deps-latest:
-    uses: btclib-org/.github/.github/workflows/reusable-deps-latest.yml@4bdf0d8325ee772e6e1ecd314837910205b1968d # v2026.11.8
+    uses: btclib-org/.github/.github/workflows/reusable-deps-latest.yml@f1e5044d9c9d0ce9d1c5cdc74f483b3d08a2bd8f # v2026.11.9
     with:
       # one image per platform family, at the floor and the ceiling of the
       # interpreters the package claims: an upgrade breaks at one end of
