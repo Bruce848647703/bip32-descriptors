@@ -53,7 +53,7 @@ concurrency:
 
 jobs:
   vectors:
-    uses: btclib-org/.github/.github/workflows/reusable-vendored-vectors.yml@5be4b0fbb5231cff001a3ee0eaa8f7d82bffef11 # v2026.11.5
+    uses: btclib-org/.github/.github/workflows/reusable-vendored-vectors.yml@4bdf0d8325ee772e6e1ecd314837910205b1968d # v2026.11.8
     # permissions do not inherit through a call: the called job wants
     # issues: write for its gh issue create/edit/close calls, so the
     # calling job declares it here, which is what caps what the called
