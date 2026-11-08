@@ -4711,7 +4711,7 @@ def _template_key(
     is refused rather than folded into the first: BIP388 lists exactly
     that repetition, ``sh(multi(1,@0/**,@0/**))``, as invalid.
 
-    A participant is never itself a ``musig()``: `_parse_musig` refuses
+    A participant is never itself a ``musig()``: `KeyExpression` refuses
     the nesting before this is ever reached, so there is no check of that
     here for a test to have to reach past.
     """

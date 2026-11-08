@@ -19,6 +19,13 @@ btclib-org/bip32-descriptors#159 and btclib-org/bip32-descriptors#161.
 with no `pub_key`, a `pub_key` beside another key or a derivation, and a
 hardening symbol BIP380 does not allow. Issues
 btclib-org/bip32-descriptors#171 and btclib-org/bip32-descriptors#178.
+
+It also refuses a ``musig()`` with an `xkey`, an `origin`, or a
+participant that is a ``musig()``, x-only, uncompressed or no
+`KeyExpression`. A path or a wildcard on a ``musig()`` is refused where
+it hardens, or where a participant is not extended or is ranged. A
+wildcard is refused unless it is None, 0 or 2**31. Issue
+btclib-org/bip32-descriptors#179.
 """
 
 from __future__ import annotations
@@ -955,3 +962,156 @@ def test_a_key_of_either_hardening_symbol_is_built(hardening: str) -> None:
     for key in (_C_KEY, _RANGED_KEY, _MUSIG):
         rebuilt = replace(key, hardening=hardening)
         assert rebuilt.hardening == hardening
+
+
+_XPUB_A = xpub_from_xprv(rootxprv_from_seed(bytes(32)))
+_XPUB_B = xpub_from_xprv(rootxprv_from_seed(b"\x01" * 32))
+_FIXED_A = KeyExpression(pub_key=bytes.fromhex(_K))
+_FIXED_B = KeyExpression(pub_key=bytes.fromhex(_K2))
+_EXTENDED = (KeyExpression(xkey=_XPUB_A), KeyExpression(xkey=_XPUB_B))
+(_ORIGIN_KEY,) = parse(f"wpkh([deadbeef/1h]{_K})").key_expressions
+_MUSIG_PAIR = (_FIXED_A, _FIXED_B)
+
+
+@pytest.mark.parametrize(
+    "values,err_msg,text",
+    [
+        (
+            {"participants": _MUSIG_PAIR, "origin": _ORIGIN_KEY.origin},
+            "musig() cannot be nested inside a key origin",
+            f"tr([deadbeef/1h]musig({_K},{_K2}))",
+        ),
+        (
+            {"participants": (KeyExpression(participants=_MUSIG_PAIR), _FIXED_A)},
+            "Too many ')' in musig() expression",
+            f"tr(musig(musig({_K},{_K2}),{_K}))",
+        ),
+        (
+            {"participants": (replace(_FIXED_A, x_only=True), _FIXED_B)},
+            "musig(): x-only public keys are allowed in a taproot key expression only",
+            f"tr(musig({_K[2:]},{_K2}))",
+        ),
+        (
+            {"participants": (KeyExpression(pub_key=_UNCOMPRESSED), _FIXED_B)},
+            "musig(): uncompressed public keys are not allowed here",
+            f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
+        ),
+        (
+            {"participants": _MUSIG_PAIR, "der_path": (1,)},
+            "musig() derivation requires every participant to be extended",
+            f"tr(musig({_K},{_K2})/1)",
+        ),
+        (
+            {"participants": _MUSIG_PAIR, "wildcard": 0},
+            "musig() derivation requires every participant to be extended",
+            f"tr(musig({_K},{_K2})/*)",
+        ),
+        (
+            {
+                "participants": (replace(_EXTENDED[0], wildcard=0), _EXTENDED[1]),
+                "der_path": (1,),
+            },
+            "musig() cannot have a ranged participant and derivation too",
+            f"tr(musig({_XPUB_A}/*,{_XPUB_B})/1)",
+        ),
+        (
+            {"participants": _EXTENDED, "wildcard": 2**31},
+            "musig() cannot have a hardened wildcard",
+            f"tr(musig({_XPUB_A},{_XPUB_B})/*h)",
+        ),
+        (
+            {"participants": _EXTENDED, "der_path": (2**31,)},
+            "musig() cannot have hardened derivation steps",
+            f"tr(musig({_XPUB_A},{_XPUB_B})/0h)",
+        ),
+    ],
+    ids=[
+        "origin",
+        "nested",
+        "x-only participant",
+        "uncompressed participant",
+        "path, fixed participant",
+        "wildcard, fixed participant",
+        "path, ranged participant",
+        "hardened wildcard",
+        "hardened step",
+    ],
+)
+def test_a_musig_parse_refuses_is_refused_when_built(
+    values: dict[str, Any], err_msg: str, text: str
+) -> None:
+    """With the message `parse` gives after the position of the key."""
+    with pytest.raises(BTClibValueError, match=f"^key [0-9]+: {re.escape(err_msg)}$"):
+        parse(text)
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+        KeyExpression(**values)
+
+
+def test_a_musig_with_an_xkey_is_refused() -> None:
+    """`str` writes the ``musig()`` alone; `parse` has no message for it."""
+    with pytest.raises(BTClibValueError, match=r"^a musig\(\) takes no xkey$"):
+        KeyExpression(xkey=_XPUB_A, participants=_MUSIG_PAIR)
+
+
+@pytest.mark.parametrize(
+    "values,err_msg",
+    [
+        ({"participants": (_FIXED_A, _K2)}, "invalid participant type: str"),
+        (
+            {"participants": _EXTENDED, "der_path": ("1",)},
+            "invalid derivation index type: str",
+        ),
+        ({"xkey": _XPUB_A, "wildcard": "*"}, "invalid wildcard type: str"),
+        ({"xkey": _XPUB_A, "wildcard": True}, "invalid wildcard type: bool"),
+    ],
+    ids=["participant", "musig step", "wildcard", "bool wildcard"],
+)
+def test_a_musig_or_wildcard_field_of_another_type_is_refused(
+    values: dict[str, Any], err_msg: str
+) -> None:
+    """A participant is a `KeyExpression`, a step and a wildcard an int."""
+    with pytest.raises(BTClibTypeError, match=f"^{err_msg}$"):
+        KeyExpression(**values)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"xkey": _XPUB_A, "wildcard": 5},
+        {"xkey": _XPUB_A, "wildcard": -1},
+        {"participants": _EXTENDED, "wildcard": 5},
+    ],
+    ids=["xkey 5", "xkey -1", "musig 5"],
+)
+def test_a_wildcard_parse_never_reads_is_refused(values: dict[str, Any]) -> None:
+    """`parse` reads what `str` writes for it as 0 or 2**31."""
+    with pytest.raises(
+        BTClibValueError, match=r"^invalid wildcard: None, 0 or 2\*\*31 expected$"
+    ):
+        KeyExpression(**values)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        KeyExpression(xkey=_XPUB_A),
+        KeyExpression(xkey=_XPUB_A, wildcard=0),
+        KeyExpression(xkey=_XPUB_A, wildcard=2**31),
+        KeyExpression(participants=_MUSIG_PAIR),
+        KeyExpression(participants=_EXTENDED, der_path=(1,), wildcard=0),
+        KeyExpression(participants=(replace(_EXTENDED[0], wildcard=0), _EXTENDED[1])),
+    ],
+    ids=["xkey", "wildcard", "hardened wildcard", "musig", "musig path", "ranged"],
+)
+def test_a_key_parse_builds_is_built_and_read_back(key: KeyExpression) -> None:
+    """The control: what `str` writes, `parse` reads back as the key."""
+    assert parse(str(TrDescriptor(key))).key_expressions == (key,)
+
+
+def test_a_musig_of_wallet_policy_placeholders_is_built() -> None:
+    """The control: the stand-ins `wallet_policy` writes for a ``musig()``."""
+    descriptor = parse(f"tr(musig({_XPUB_A},{_XPUB_B})/*)")
+    template, _ = descriptors_module.wallet_policy(descriptor)
+    assert template == "tr(musig(@0,@1)/*)"
+    placeholders = tuple(KeyExpression(xkey=f"@{i}") for i in range(2))
+    assert KeyExpression(participants=placeholders, wildcard=0).is_aggregate

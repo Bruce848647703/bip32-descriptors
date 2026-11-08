@@ -386,13 +386,15 @@ class KeyExpression:
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Check `pub_key`, `xkey`, `hardening` and `x_only` as below.
+        """Check `pub_key`, `xkey`, `participants`, `wildcard` and `hardening`.
 
         A `pub_key` is the SEC bytes of a point, as `_assert_pub_key` says,
         and the whole key: no `xkey`, `participants`, `der_path` or
         `wildcard` beside it. `x_only` takes a `pub_key` of 33 bytes.
-        `hardening` is one of the two symbols BIP380 allows. A refusal
-        quotes no key, beyond the prefix byte of a `pub_key`.
+        `participants` make a ``musig()`` as `_assert_musig` says.
+        `wildcard` is None, 0 or 2**31. `hardening` is one of the two
+        symbols BIP380 allows. A refusal quotes no key, beyond the prefix
+        byte of a `pub_key`.
 
         An `xkey` is an extended public key of any version btclib decodes,
         or one of the wallet-policy stand-ins `_PLACEHOLDER` matches, or
@@ -404,6 +406,8 @@ class KeyExpression:
         _assert_pub_key(self)
         _assert_fixed_key_alone(self)
         _assert_hardening(self.hardening)
+        _assert_wildcard(self.wildcard)
+        _assert_musig(self)
         if not isinstance(self.xkey, str):
             err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
@@ -926,6 +930,73 @@ def _assert_hardening(hardening: object) -> None:
         raise BTClibValueError("invalid hardening symbol: h or ' expected")
 
 
+def _assert_wildcard(wildcard: object) -> None:
+    """Refuse any wildcard but None, 0 and 2**31, the offsets `parse` reads.
+
+    `str` writes any other offset of an extended key as the hardened
+    wildcard, which `parse` reads as 2**31.
+    """
+    if wildcard is None:
+        return
+    if not is_integer(wildcard):
+        raise BTClibTypeError(f"invalid wildcard type: {type(wildcard).__name__}")
+    if wildcard not in {0, HARDENED_OFFSET}:
+        raise BTClibValueError("invalid wildcard: None, 0 or 2**31 expected")
+
+
+def _assert_musig(key: KeyExpression) -> None:
+    """Refuse the ``musig()`` keys below, which `parse` never builds.
+
+    Each participant is a `KeyExpression`, neither a ``musig()`` nor
+    x-only nor uncompressed, and the ``musig()`` has no `xkey` and no
+    `origin`, which `str` would not write. A path or a wildcard on it
+    takes extended participants none of which is ranged, and no hardened
+    step or wildcard. A refusal carries `parse`'s message, except for a
+    type and an `xkey`, for which `parse` has none.
+    """
+    participants = key.participants
+    if not participants:
+        return
+    for participant in participants:
+        if not isinstance(participant, KeyExpression):
+            err_msg = f"invalid participant type: {type(participant).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+    if key.xkey:
+        raise BTClibValueError("a musig() takes no xkey")
+    if key.origin is not None:
+        raise BTClibValueError(_MUSIG_IN_ORIGIN)
+    _assert_participants(participants)
+    if key.der_path or key.wildcard is not None:
+        _assert_musig_path(key)
+
+
+def _assert_participants(participants: tuple[KeyExpression, ...]) -> None:
+    """Refuse a participant that `_assert_musig` refuses whatever the path."""
+    if any(participant.participants for participant in participants):
+        raise BTClibValueError(_MUSIG_CLOSES)
+    for participant in participants:
+        if participant.x_only:
+            raise BTClibValueError(f"musig(): {_X_ONLY_REFUSED}")
+        if not participant.is_compressed:
+            raise BTClibValueError(f"musig(): {_UNCOMPRESSED_REFUSED}")
+
+
+def _assert_musig_path(key: KeyExpression) -> None:
+    """Refuse the path or wildcard of a ``musig()`` as `_assert_musig` says."""
+    if any(not participant.xkey for participant in key.participants):
+        raise BTClibValueError(_UNEXTENDED_PARTICIPANT)
+    if any(participant.is_ranged for participant in key.participants):
+        raise BTClibValueError(_RANGED_PARTICIPANT)
+    if key.wildcard:
+        raise BTClibValueError(_HARDENED_MUSIG_WILDCARD)
+    for index in key.der_path:
+        if not is_integer(index):
+            err_msg = f"invalid derivation index type: {type(index).__name__}"
+            raise BTClibTypeError(err_msg)
+        if HARDENED_OFFSET <= index < 2 * HARDENED_OFFSET:
+            raise BTClibValueError(_HARDENED_MUSIG_STEP)
+
+
 def _pub_key_from_hex(key: str, *, x_only: bool) -> tuple[bytes, bool]:
     """Return the SEC bytes of a hex key, and whether it was x-only.
 
@@ -1208,7 +1279,7 @@ def _assert_key_characters(rest: str, *, extended: bool) -> None:
         # is a key expression, and reaching here means it was written
         # behind a key origin, which is not where it may be nested
         if key.startswith("musig("):
-            raise BTClibValueError("musig() cannot be nested inside a key origin")
+            raise BTClibValueError(_MUSIG_IN_ORIGIN)
         raise BTClibValueError("not a key expression")
     if steps and not extended:
         raise BTClibValueError(_UNDERIVABLE)
@@ -1275,6 +1346,9 @@ _RANGED_PARTICIPANT = "musig() cannot have a ranged participant and derivation t
 # Bitcoin Core's own message, refusing a musig() that holds a ")" of its own
 _MUSIG_CLOSES = "Too many ')' in musig() expression"
 _HARDENED_MUSIG_STEP = "musig() cannot have hardened derivation steps"
+_HARDENED_MUSIG_WILDCARD = "musig() cannot have a hardened wildcard"
+_UNEXTENDED_PARTICIPANT = "musig() derivation requires every participant to be extended"
+_MUSIG_IN_ORIGIN = "musig() cannot be nested inside a key origin"
 # Bitcoin Core's own message, refusing a musig() with a multipath step in
 # both its participants and its path
 _MUSIG_ONE_MULTIPATH = (
@@ -1312,7 +1386,7 @@ def _musig_der_path(suffix: str) -> tuple[tuple[int, ...], int | None, int]:
         return (), None, 0
     steps, wildcard, wildcard_hardening = _split_wildcard(suffix[1:].split("/"))
     if wildcard_hardening:
-        raise BTClibValueError("musig() cannot have a hardened wildcard")
+        raise BTClibValueError(_HARDENED_MUSIG_WILDCARD)
     try:
         length = _assert_key_path(steps)
     except BTClibValueError as e:
@@ -1402,8 +1476,7 @@ def _parse_musig(expression: str, prv_keys: MutableMapping[str, str]) -> KeyExpr
     path = suffix if suffix.startswith("/") else ""
     if path:
         if any(not key.xkey for key in participants):
-            err_msg = "musig() derivation requires every participant to be extended"
-            raise BTClibValueError(err_msg)
+            raise BTClibValueError(_UNEXTENDED_PARTICIPANT)
         if any(key.is_ranged for key in participants):
             raise BTClibValueError(_RANGED_PARTICIPANT)
     der_path, wildcard, multipath = _musig_der_path(path)
