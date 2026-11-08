@@ -690,6 +690,7 @@ same sha, which is the reliance `REVIEWING.md` provides for.
 | `lint`, `docs` | pull request, push | — |
 | `integration-bitcoind` | pull request, push to main, weekly | — |
 | `claude-review` | pull request, and `@claude` in a comment | — |
+| `claude-implement` | an issue opened, labelled or unlabelled | — |
 | `api-break` | pull request | — |
 | `sourcery` | pull request | — |
 | `verified-signatures` | push to main | — |
@@ -723,6 +724,10 @@ jobs the whole organization may run at once, and `REPOSITORY.md`'s *Plan-gated
 settings* records that ceiling. `verified-signatures.yml` reports after each
 push to `main` whether every commit pushed is `verified`; [the standard's
 *Signatures*][s-sigs] has the rule.
+
+`claude-implement.yml` runs on an issue and never on a pull request, so
+it gates nothing: the pull request it opens takes the checks above like
+any other.
 
 ### Mutation testing
 

@@ -1,0 +1,51 @@
+---
+name: claude-implement
+
+# An issue taken as far as an open pull request by the Claude Code
+# Action. The jobs, their scripts and bounds, and who starts a run are
+# all btclib-org/.github's reusable-claude-implement.yml, whose header
+# says what its caller holds; section 10 of the organization's standard
+# has the rule. What stays here is the trigger, the permissions, the
+# cache mode, the gates of this tree and the secret, passed by name,
+# none of which the callee holds.
+#
+# Off until the organization variable CLAUDE_IMPLEMENT_ENABLED is
+# `true`: the callee's agent jobs guard on it, and its other jobs run
+# only after them. REPOSITORY.md's *What this file passes over* reads it
+# back.
+
+# no `workflow_dispatch`, an exception to section 10's *`workflow_dispatch`
+# on everything*, as claude-review.yml and sourcery.yml are: the event
+# carries no issue, and the callee's `assess` job runs only on `issues`
+on:
+  issues:
+    types: [opened, labeled, unlabeled]
+
+# least privilege for the GITHUB_TOKEN, elevated on the calling job below
+# and nowhere else
+permissions:
+  contents: read
+
+jobs:
+  # The permissions are the ones the callee's jobs declare, for the
+  # reason claude-review.yml's calling job gives, and the secret is
+  # named rather than inherited for the same reason.
+  claude-implement:
+    # anybody can open an issue, and `none` keeps such a run from the
+    # cache, which is what actionlint's cache-call-unrestricted asks for;
+    # the callee has no cache step
+    cache-mode: none
+    uses: btclib-org/.github/.github/workflows/reusable-claude-implement.yml@5be4b0fbb5231cff001a3ee0eaa8f7d82bffef11 # v2026.11.5
+    permissions:
+      contents: read
+      issues: write # the assessment's comment and the decision label
+      id-token: write # the OIDC token the action mints at startup, and the one the callee's publish job trades for the App's token
+    with:
+      # CONTRIBUTING.md's *The environment and the gates*, one command
+      # per line
+      gates: |
+        uv run pytest
+        uv run pre-commit run --all-files
+        uv run --locked --no-default-groups --group docs sphinx-build -n -W -b html docs/source docs/build/html
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
