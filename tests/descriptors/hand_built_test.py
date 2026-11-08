@@ -14,6 +14,11 @@ Issues btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
 btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
 btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#150,
 btclib-org/bip32-descriptors#159 and btclib-org/bip32-descriptors#161.
+
+`KeyExpression` refuses a `pub_key` that `parse` refuses, an x-only key
+with no `pub_key`, a `pub_key` beside another key or a derivation, and a
+hardening symbol BIP380 does not allow. Issues
+btclib-org/bip32-descriptors#171 and btclib-org/bip32-descriptors#178.
 """
 
 from __future__ import annotations
@@ -25,8 +30,10 @@ from dataclasses import fields, replace
 from typing import Any
 
 import pytest
+from btclib import b58
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
+from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32 import derive, rootxprv_from_seed, xpub_from_xprv
@@ -51,6 +58,7 @@ from bip32_descriptors.descriptors.descriptors import (
     WpkhDescriptor,
     WshDescriptor,
 )
+from bip32_descriptors.descriptors.key_expression import KeyExpression
 from tests.secret_free import assert_secret_free
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
@@ -802,3 +810,148 @@ def test_a_musig_key_inside_tr_is_built() -> None:
         RawTrDescriptor(_MUSIG),
     ):
         assert parse(str(descriptor)) == descriptor
+
+
+# the key of the issue's example: 0x02, then an x that no point has
+_OFF_CURVE = b"\x02" + b"\xff" * 32
+_UNCOMPRESSED_WIF = b58.wif_from_prv_key(3, "mainnet", compressed=False)
+_UNCOMPRESSED = b58.prv_key_data_from_wif(_UNCOMPRESSED_WIF).pub.sec
+# the private key 6, the first whose public key has an odd y
+_ODD_WIF = b58.wif_from_prv_key(6, "mainnet", compressed=True)
+
+
+@pytest.mark.parametrize(
+    "pub_key,error,err_msg",
+    [
+        (_OFF_CURVE, EccValueError, "not a public key"),
+        (b"\x05" + _OFF_CURVE[1:], BTClibValueError, "invalid public key prefix: 0x05"),
+        (b"\x04" + _OFF_CURVE[1:], BTClibValueError, "invalid public key prefix: 0x04"),
+        (
+            b"\x06" + _UNCOMPRESSED[1:],
+            BTClibValueError,
+            "invalid public key prefix: 0x06",
+        ),
+        (
+            b"\x02" + _UNCOMPRESSED[1:],
+            BTClibValueError,
+            "invalid public key prefix: 0x02",
+        ),
+    ],
+    ids=["no point", "0x05", "0x04 short", "hybrid", "0x02 long"],
+)
+def test_a_pub_key_parse_refuses_is_refused_when_built(
+    pub_key: bytes, error: type[Exception], err_msg: str
+) -> None:
+    """With the message `parse` gives after the position of the key."""
+    with pytest.raises(error, match=f"^key 0: {re.escape(err_msg)}$"):
+        parse(f"pk({pub_key.hex()})")
+    with pytest.raises(error, match=f"^{re.escape(err_msg)}$"):
+        KeyExpression(pub_key=pub_key)
+    with pytest.raises(error, match=f"^{re.escape(err_msg)}$"):
+        replace(_C_KEY, pub_key=pub_key)
+
+
+@pytest.mark.parametrize("size", [0, 1, 32, 34, 64, 66])
+def test_a_pub_key_of_no_sec_size_is_refused_when_built(size: int) -> None:
+    """Counted in bytes, where `parse` counts the characters of the hex."""
+    err_msg = f"^invalid public key length in bytes: {size}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        KeyExpression(pub_key=b"\x02" * size)
+
+
+@pytest.mark.parametrize("pub_key", [_C, bytearray.fromhex(_C), 2])
+def test_a_pub_key_of_another_type_is_refused(pub_key: Any) -> None:
+    """Hex text is not the key: `parse` is what reads hex."""
+    err_msg = f"^invalid pub_key type: {type(pub_key).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        KeyExpression(pub_key=pub_key)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [KeyExpression(), _RANGED_KEY, _MUSIG],
+    ids=["no key", "xkey", "musig"],
+)
+def test_an_x_only_key_with_no_pub_key_is_refused(key: KeyExpression) -> None:
+    """`parse` reads an extended key and a ``musig()`` as not x-only."""
+    assert not key.x_only
+    with pytest.raises(BTClibValueError, match="^invalid x-only key: no pub_key$"):
+        replace(key, x_only=True)
+
+
+def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:
+    """The key of an uncompressed WIF in a ``tr()``, which `parse` refuses."""
+    err_msg = "uncompressed public keys are not allowed here"
+    with pytest.raises(BTClibValueError, match=f"^key 0: {err_msg}$"):
+        parse(f"tr({_UNCOMPRESSED_WIF})")
+    with pytest.raises(BTClibValueError, match=f"^{err_msg}$"):
+        KeyExpression(pub_key=_UNCOMPRESSED, x_only=True)
+
+
+def test_an_odd_x_only_key_is_built_as_parse_builds_it() -> None:
+    """The control: a WIF in a ``tr()`` keeps the 0x03 byte of its key."""
+    (key,) = parse(f"tr({_ODD_WIF})").key_expressions
+    assert key.pub_key is not None
+    assert key.pub_key[0] == 3
+    assert KeyExpression(pub_key=key.pub_key, x_only=True) == key
+
+
+@pytest.mark.parametrize(
+    "script,context",
+    [
+        (b"\x21" + _OFF_CURVE + b"\xac", miniscript.P2WSH),
+        (b"\x20" + _OFF_CURVE[1:] + b"\xac", miniscript.TAPSCRIPT),
+    ],
+    ids=["p2wsh", "tapscript"],
+)
+def test_a_script_holding_no_point_reads_back_as_no_miniscript(
+    script: bytes, context: str
+) -> None:
+    """`from_script` refuses the key as `KeyExpression` does."""
+    with pytest.raises(EccValueError, match="^not a public key$"):
+        miniscript.from_script(script, context)
+    assert not miniscript.reads_back(script, context)
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("xkey", _RANGED_KEY.xkey),
+        ("participants", _MUSIG.participants),
+        ("der_path", (1,)),
+        ("wildcard", 0),
+    ],
+)
+def test_a_pub_key_beside_another_key_or_a_derivation_is_refused(
+    name: str, value: Any
+) -> None:
+    """`parse` would not read what `str` writes back as this key."""
+    with pytest.raises(BTClibValueError, match=f"^a pub_key takes no {name}$"):
+        replace(_C_KEY, **{name: value})
+
+
+@pytest.mark.parametrize(
+    "key", [_C_KEY, _RANGED_KEY, _MUSIG], ids=["pub_key", "xkey", "musig"]
+)
+@pytest.mark.parametrize("hardening", ["x", "H", ""])
+def test_a_hardening_symbol_bip380_does_not_allow_is_refused(
+    key: KeyExpression, hardening: str
+) -> None:
+    """A symbol BIP380 does not allow, an uppercase H included."""
+    err_msg = "^invalid hardening symbol: h or ' expected$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(key, hardening=hardening)
+
+
+def test_a_hardening_symbol_of_another_type_is_refused() -> None:
+    """The symbol is text, as `parse` reads it."""
+    with pytest.raises(BTClibTypeError, match="^invalid hardening type: int$"):
+        KeyExpression(pub_key=bytes.fromhex(_C), hardening=1)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("hardening", ["h", "'"])
+def test_a_key_of_either_hardening_symbol_is_built(hardening: str) -> None:
+    """The control: either symbol BIP380 allows is built."""
+    for key in (_C_KEY, _RANGED_KEY, _MUSIG):
+        rebuilt = replace(key, hardening=hardening)
+        assert rebuilt.hardening == hardening

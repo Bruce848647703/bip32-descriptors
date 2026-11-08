@@ -103,6 +103,7 @@ from btclib.tx.limits import (
 )
 from btclib.utils import assert_type, bytes_from_octets, decode_num, encode_num
 from btclib.var_int import serialize as var_int_serialize
+from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import BIP32KeyData
@@ -3259,6 +3260,9 @@ def from_script(
     miniscript, and this is what answers the question -- a caller asking
     it catches the refusal.
 
+    A key that is no point is refused as `KeyExpression` refuses it, by
+    the curve library.
+
     `key_hashes` maps a hash160 to the public key behind it, for the one
     fragment that keeps no key in the script: ``pk_h()`` and its sugared
     ``pkh()`` write the hash alone, so a script holding one is readable
@@ -3322,7 +3326,7 @@ def reads_back(
     script = bytes_from_octets(script)
     try:
         node = from_script(script, context, key_hashes)
-    except BTClibValueError:
+    except (BTClibValueError, EccValueError):
         return False
     return node.script() == script
 

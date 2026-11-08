@@ -54,6 +54,7 @@ from bip32_descriptors.bip32.bip32 import (
     xpub_from_xprv,
 )
 from bip32_descriptors.bip32.der_path import (
+    _BIP380_HARDENINGS,
     _HARDENING,
     HARDENED_OFFSET,
     hardenings_from_der_path,
@@ -385,14 +386,24 @@ class KeyExpression:
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Refuse an `xkey` that is no xpub or placeholder, quoting none of it.
+        """Check `pub_key`, `xkey`, `hardening` and `x_only` as below.
 
-        An extended public key of any version btclib decodes, or one of the
-        wallet-policy stand-ins `_PLACEHOLDER` matches, or nothing at all
-        where the key is `pub_key` or `participants`. What else is refused
-        includes an xprv, and an xprv damaged by a character, which decodes
-        as no key -- and where only its checksum changed still spells one.
+        A `pub_key` is the SEC bytes of a point, as `_assert_pub_key` says,
+        and the whole key: no `xkey`, `participants`, `der_path` or
+        `wildcard` beside it. `x_only` takes a `pub_key` of 33 bytes.
+        `hardening` is one of the two symbols BIP380 allows. A refusal
+        quotes no key, beyond the prefix byte of a `pub_key`.
+
+        An `xkey` is an extended public key of any version btclib decodes,
+        or one of the wallet-policy stand-ins `_PLACEHOLDER` matches, or
+        nothing at all where the key is `pub_key` or `participants`. What
+        else is refused includes an xprv, and an xprv damaged by a
+        character, which decodes as no key -- and where only its checksum
+        changed still spells one.
         """
+        _assert_pub_key(self)
+        _assert_fixed_key_alone(self)
+        _assert_hardening(self.hardening)
         if not isinstance(self.xkey, str):
             err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
@@ -854,30 +865,83 @@ def _key_origin(description: str) -> tuple[BIP32KeyOrigin, str]:
 _X_ONLY_REFUSED = "x-only public keys are allowed in a taproot key expression only"
 
 
+_UNCOMPRESSED_REFUSED = "uncompressed public keys are not allowed here"
+
+
+def _assert_pub_key(key: KeyExpression) -> None:
+    """Refuse a `pub_key` value and an `x_only` that `parse` never builds.
+
+    With `parse`'s messages, except for a size, which `parse` counts in
+    characters of hex, and for what it never reads: bytes of another type,
+    and an x-only key with no `pub_key`. An x-only key is held in 33
+    bytes. `parse` reads an uncompressed WIF in a taproot position to one
+    of 65, which this refuses with the message `parse` gives for it.
+    """
+    pub_key = key.pub_key
+    if pub_key is None:
+        if key.x_only:
+            raise BTClibValueError("invalid x-only key: no pub_key")
+        return
+    if not isinstance(pub_key, bytes):
+        err_msg = f"invalid pub_key type: {type(pub_key).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    size = len(pub_key)
+    if size not in {33, 65}:
+        raise BTClibValueError(f"invalid public key length in bytes: {size}")
+    prefix = pub_key[0]
+    if (size == 33 and prefix not in {2, 3}) or (size == 65 and prefix != 4):
+        # 06 and 07 are the hybrid encoding, which nothing in bitcoin
+        # produces and Bitcoin Core refuses in a descriptor too
+        raise BTClibValueError(f"invalid public key prefix: 0x{prefix:02x}")
+    # a point off the curve has no script to derive
+    point_from_pub_key(pub_key)
+    if key.x_only and size != 33:
+        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
+
+
+def _assert_fixed_key_alone(key: KeyExpression) -> None:
+    """Refuse a `pub_key` beside another key or a derivation of its own.
+
+    `str` writes the `pub_key` alone, or the ``musig()`` of `participants`
+    alone, so the key would not be read back.
+    """
+    if key.pub_key is None:
+        return
+    beside = {
+        "xkey": key.xkey,
+        "participants": key.participants,
+        "der_path": key.der_path,
+        "wildcard": key.wildcard is not None,
+    }
+    for name, value in beside.items():
+        if value:
+            raise BTClibValueError(f"a pub_key takes no {name}")
+
+
+def _assert_hardening(hardening: object) -> None:
+    """Refuse a hardening symbol BIP380 does not allow, quoting none of it."""
+    if not isinstance(hardening, str):
+        raise BTClibTypeError(f"invalid hardening type: {type(hardening).__name__}")
+    if hardening not in _BIP380_HARDENINGS:
+        raise BTClibValueError("invalid hardening symbol: h or ' expected")
+
+
 def _pub_key_from_hex(key: str, *, x_only: bool) -> tuple[bytes, bool]:
-    """Return the SEC bytes of a hex key, and whether it was x-only."""
+    """Return the SEC bytes of a hex key, and whether it was x-only.
+
+    The length of the text is checked here, and the bytes by the
+    `KeyExpression` they go into, which `parse` builds inside the refusal
+    that names the key by its position.
+    """
     length = len(key)
     if length == 64:
         if not x_only:
             raise BTClibValueError(_X_ONLY_REFUSED)
         # the even-y lift of BIP340, which is what an x-only key means
-        pub_key = b"\x02" + bytes_from_octets(key)
-    elif length in {66, 130}:
-        prefix = key[:2]
-        if (length == 66 and prefix not in {"02", "03"}) or (
-            length == 130 and prefix != "04"
-        ):
-            # 06 and 07 are the hybrid encoding, which nothing in bitcoin
-            # produces and Bitcoin Core refuses in a descriptor too
-            raise BTClibValueError(f"invalid public key prefix: 0x{prefix}")
-        pub_key = bytes_from_octets(key)
-    else:
+        return b"\x02" + bytes_from_octets(key), True
+    if length not in {66, 130}:
         raise BTClibValueError(f"invalid public key length: {length} characters")
-    # a key expression is parsed in order to be used, and a point off the
-    # curve has no script to derive: refuse it here, where the error can
-    # still say it was the key
-    point_from_pub_key(pub_key)
-    return pub_key, length == 64
+    return bytes_from_octets(key), False
 
 
 def _is_extended_key(key: str) -> bool:
@@ -1537,7 +1601,7 @@ def _read_key(
         wif_prefix=b"" if _HEX.fullmatch(key) else base58_decode(key)[:1],
     )
     if compressed and not key_expression.is_compressed:
-        raise BTClibValueError("uncompressed public keys are not allowed here")
+        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
     wifs = _FILED_WIFS.get()
     if key_expression.wif_prefix and wifs is not None:
         _file_wif(key_expression, key, wifs)

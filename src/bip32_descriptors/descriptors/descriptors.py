@@ -4003,13 +4003,17 @@ def _inferred_key(sec: bytes, context: str, known: _Known) -> KeyExpression | No
     """Return a key behind its origin, Core's `InferPubkey`.
 
     None for a hybrid key, and for an uncompressed one where only a
-    compressed one may be.
+    compressed one may be. None too for a key that is no point, which
+    Core infers and `parse` refuses.
     """
     if _sec_size(sec) != len(sec) or sec[0] > 4:
         return None
     if context not in (_TOP, _P2SH) and len(sec) != 33:
         return None
-    return KeyExpression(origin=known.keys.get(sec), pub_key=sec)
+    try:
+        return KeyExpression(origin=known.keys.get(sec), pub_key=sec)
+    except EccValueError:
+        return None
 
 
 def _inferred_x_only(x_only: bytes, known: _Known) -> KeyExpression:
@@ -4079,21 +4083,31 @@ def _inferred_miniscript(
             script, _MINISCRIPT_CONTEXTS[context], key_hashes
         )
         node = _inferred_node(read, known)
-    except BTClibValueError:
+    except (BTClibValueError, EccValueError):
         return None
     sane = node is not None and node.is_sane() and node.is_satisfiable
     return node if sane else None
 
 
 def _inferred_leaf(script: bytes, known: _Known) -> DescriptorLeaf | None:
-    """Return the leaf a tapscript is, Core's `InferScript` in a ``tr()``."""
-    if len(script) == 34 and script[0] == _X_ONLY_SIZE and script[33] == _OP_CHECKSIG:
-        return _inferred_x_only(script[1:33], known)
-    multi_a = _multi_a(script)
-    if multi_a is not None:
-        threshold, x_only_keys = multi_a
-        keys = tuple(_inferred_x_only(x_only, known) for x_only in x_only_keys)
-        return MultiA(threshold, keys)
+    """Return the leaf a tapscript is, Core's `InferScript` in a ``tr()``.
+
+    None for a key that is no point, which Core infers and `parse` refuses.
+    """
+    try:
+        if (
+            len(script) == 34
+            and script[0] == _X_ONLY_SIZE
+            and script[33] == _OP_CHECKSIG
+        ):
+            return _inferred_x_only(script[1:33], known)
+        multi_a = _multi_a(script)
+        if multi_a is not None:
+            threshold, x_only_keys = multi_a
+            keys = tuple(_inferred_x_only(x_only, known) for x_only in x_only_keys)
+            return MultiA(threshold, keys)
+    except EccValueError:
+        return None
     return _inferred_miniscript(script, _P2TR, known)
 
 
@@ -4173,33 +4187,20 @@ def _placed(
     return True
 
 
-def _reads_back(leaf: DescriptorLeaf) -> bool:
-    """Return True where `parse` reads the text of an inferred leaf.
-
-    Core's `InferScript` asks less than its parser does: a key need not be
-    a point, nor a sane miniscript satisfiable. The parser's own reading is
-    what answers here, so there is no second copy of its rules.
-    """
-    try:
-        _parse_tree(_tree_expression(leaf), 0, {})
-    except (BTClibValueError, EccValueError):
-        return False
-    return True
-
-
 def _inferred_leaf_or_raw(script: bytes, version: int, known: _Known) -> DescriptorTree:
     """Return the tree a proven leaf is: what Core infers, else a ``rawleaf()``.
 
     A leaf of another version is a ``rawleaf()`` whatever its script is, the
     version being part of what the output key commits to. So is a leaf of
-    version c0 that infers to nothing else, or to what `parse` refuses. A
-    leaf with no script is the node of its hash: ``rawleaf()`` with no HEX
-    does not parse, and the node commits to the same output key.
+    version c0 that infers to nothing else, such as one holding a key that
+    is no point. A leaf with no script is the node of its hash:
+    ``rawleaf()`` with no HEX does not parse, and the node commits to the
+    same output key.
     """
     if not script:
         return RawNode(leaf_hash(version, script))
     leaf = _inferred_leaf(script, known) if version == _TAPSCRIPT_LEAF_VERSION else None
-    return leaf if leaf is not None and _reads_back(leaf) else RawLeaf(script, version)
+    return RawLeaf(script, version) if leaf is None else leaf
 
 
 def _inferred_subtree(
@@ -4463,10 +4464,11 @@ def infer_descriptor(
     A p2tr output whose internal key and merkle root the provider knows is
     a ``tr()`` of the tree it can rebuild, whatever is missing from it: a
     leaf that infers to nothing else, that has another leaf version, or
-    that infers to what `parse` refuses, is a ``rawleaf()``, and a leaf
-    with no script, or a subtree none of whose leaves is proven, is a
-    ``rawnode()``. So is the whole tree where the records contradict each
-    other, which only a hash collision does.
+    that Core infers to what `parse` refuses, such as a key that is no
+    point, is a ``rawleaf()``, and a leaf with no script, or a subtree
+    none of whose leaves is proven, is a ``rawnode()``. So is the whole
+    tree where the records contradict each other, which only a hash
+    collision does.
 
     Two equal subtrees share their control blocks, so one is rebuilt. The
     other is written out in a tree Core rebuilds with no raw form in it,

@@ -756,6 +756,21 @@ def test_what_parse_refuses_is_the_address_of_the_output(
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
+_PKH_OF_U5 = b"\x76\xa9\x14" + hash160(bytes.fromhex(U5)) + b"\x88"
+
+
+@pytest.mark.parametrize(
+    "witness_script", [_PKH_OF_U5 + b"\xac", _PKH_OF_U5 + b"\xad\x51"]
+)
+def test_an_uncompressed_key_in_a_p2wsh_pkh_is_the_address_of_the_output(
+    witness_script: bytes,
+) -> None:
+    """Core's `InferPubkey` takes no uncompressed key in a P2WSH."""
+    script = ScriptPubKey.p2wsh(witness_script).script
+    provider = Provider(keys={bytes.fromhex(U5): None}, scripts=(witness_script,))
+    assert infer_descriptor(script, provider, "regtest") == _addr(script)
+
+
 def test_a_leaf_parse_reads_stays_what_it_infers_to() -> None:
     """The control: a key that is a point keeps its ``pk()``."""
     leaf = bytes.fromhex(PK_K1)
