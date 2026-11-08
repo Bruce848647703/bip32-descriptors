@@ -18,7 +18,7 @@ import pytest
 from btclib import b58
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 
-from bip32_descriptors.descriptors import parse, private_string
+from bip32_descriptors.descriptors import add_checksum, parse, private_string
 from bip32_descriptors.descriptors.miniscript import TAPSCRIPT
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
 from tests.descriptors.descriptors_test import (
@@ -35,6 +35,13 @@ from tests.secret_free import assert_secret_free
 
 # the key of WIF, spelled for the test networks
 _TESTNET_WIF = b58.wif_from_prv_key(b58.prv_key_data_from_wif(WIF).q, "testnet")
+
+# the regtest WIFs of KEY, of its negation (the even key of XONLY), and of
+# MUSIG_A, as the rows checked against Bitcoin Core write them
+_W = "cVDJUtDjdaM25yNVVDLLX3hcHUfth4c7tY3rSc4hy9e8ibtCuj6G"
+_NEG = "cNXjPRPAE4VqftyTR5jRpKcLvQHJJTjqSBERsQUFiDDj66UFdyDJ"
+_MA = "cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87KcLPVfXz"
+_EVEN = f"02{XONLY}"
 
 
 @pytest.mark.parametrize(
@@ -63,6 +70,153 @@ def test_parse_files_a_wif_under_the_hex_str_writes(
     for hex_key in filed:
         assert hex_key in str(descriptor)
     assert private_string(descriptor, prv_keys, None, wifs) == text
+
+
+def test_the_regtest_wifs_are_of_their_keys() -> None:
+    """The literals the Core rows below are written with."""
+    assert _W == _TESTNET_WIF
+    for wif, key in ((_W, KEY), (_NEG, _EVEN), (_MA, MUSIG_A)):
+        assert b58.prv_key_data_from_wif(wif, "regtest").pub.sec.hex() == key
+
+
+@pytest.mark.parametrize(
+    "text,filed",
+    [
+        (f"tr({_NEG},pk({_W}))", {XONLY: _NEG, KEY: _W}),
+        (f"tr({_W},pk({_NEG}))", {XONLY: _NEG, KEY: _W}),
+        (f"tr({_W},pk({_W}))", {XONLY: _W}),
+    ],
+    ids=["even-first", "even-last", "odd-only"],
+)
+def test_an_x_only_key_keeps_its_even_wif(text: str, filed: dict[str, str]) -> None:
+    """The one Core's GetKeyByXOnly finds; the odd one under its 33 bytes."""
+    wifs: dict[str, str] = {}
+    parse(text, "regtest", wifs=wifs)
+    assert wifs == filed
+
+
+@pytest.mark.parametrize("even_first", [True, False])
+def test_the_even_wif_is_kept_across_networks(*, even_first: bool) -> None:
+    """The x-only hex keeps the even WIF in either order; none is written back.
+
+    Each descriptor reads the other network's WIF under one of its key's
+    spellings, and `private_string` refuses it.
+    """
+    even = b58.wif_from_prv_key(b58.prv_key_data_from_wif(_NEG).q, "mainnet")
+    reads = [(f"tr({even})", "mainnet"), (f"tr({_W})", "regtest")]
+    wifs: dict[str, str] = {}
+    descriptors = [
+        parse(text, network, wifs=wifs)
+        for text, network in (reads if even_first else reversed(reads))
+    ]
+    assert wifs == {XONLY: even, KEY: _W}
+    for descriptor in descriptors:
+        network = descriptor.network
+        with pytest.raises(
+            BTClibValueError, match=f"^invalid wifs entry: no {network} WIF of its key$"
+        ) as e:
+            private_string(descriptor, None, None, wifs)
+        assert_secret_free(e.value, [even, _W])
+
+
+@pytest.mark.parametrize(
+    "entry", [MUSIG_A_WIF, "not a key", b"not a key"], ids=["other", "no-wif", "bytes"]
+)
+def test_an_entry_of_another_key_does_not_hold_back_an_odd_wif(entry: str) -> None:
+    """Only the even key of the same x coordinate does."""
+    wifs = {XONLY: entry}
+    parse(f"tr({_W})", "regtest", wifs=wifs)
+    assert wifs == {XONLY: _W}
+
+
+@pytest.mark.parametrize(
+    "text,core",
+    [
+        (
+            f"tr({MUSIG_A[2:]},pk(musig({_MA},{_W})))",
+            f"tr({_MA},pk(musig({_MA},{_W})))#9a2ay92p",
+        ),
+        (
+            f"tr({_MA},pk(musig({MUSIG_A},{_W})))",
+            f"tr({_MA},pk(musig({_MA},{_W})))#9a2ay92p",
+        ),
+        (f"tr({_NEG},pk({_W}))", f"tr({_NEG},pk({_NEG}))#fgy3an9k"),
+        (f"tr({_W},pk({_NEG}))", f"tr({_NEG},pk({_NEG}))#fgy3an9k"),
+        (
+            f"tr({_W},pk(musig({_NEG},{_MA})))",
+            f"tr({_NEG},pk(musig({_NEG},{_MA})))#l35qh4k5",
+        ),
+        (
+            f"tr({_W},pk(musig({_EVEN},{_MA})))",
+            f"tr({_W},pk(musig({_EVEN},{_MA})))#2p93kays",
+        ),
+        (
+            f"tr({_NEG},pk(musig({KEY},{_MA})))",
+            f"tr({_NEG},pk(musig({KEY},{_MA})))#j5adhuam",
+        ),
+        (
+            f"tr({_W},pk(musig({KEY},{_MA})))",
+            f"tr({_W},pk(musig({_W},{_MA})))#atgc5s98",
+        ),
+        (
+            f"tr({XONLY},pk(musig({_W},{_MA})))",
+            f"tr({_W},pk(musig({_W},{_MA})))#atgc5s98",
+        ),
+        (
+            f"tr({_W},{{pk({_NEG}),pk(musig({KEY},{_MA}))}})",
+            f"tr({_NEG},{{pk({_NEG}),pk(musig({_W},{_MA}))}})#2kdpay3g",
+        ),
+        (
+            f"tr({_NEG},{{pk({_W}),pk(musig({KEY},{_MA}))}})",
+            f"tr({_NEG},{{pk({_NEG}),pk(musig({_W},{_MA}))}})#2kdpay3g",
+        ),
+        (
+            f"tr({_W},{{pk({_NEG}),pk(musig({_EVEN},{_MA}))}})",
+            f"tr({_NEG},{{pk({_NEG}),pk(musig({_NEG},{_MA}))}})#sc9zxw6n",
+        ),
+    ],
+    ids=[
+        "x-only-hex",
+        "participant-hex",
+        "even-and-odd",
+        "odd-and-even",
+        "even-participant",
+        "even-participant-hex",
+        "odd-participant-hex",
+        "odd-participant-of-x-only",
+        "x-only-of-odd-participant",
+        "odd-yields-then-participant",
+        "even-first-then-participant",
+        "odd-yields-then-even-participant",
+    ],
+)
+def test_a_wif_is_found_under_either_spelling_of_its_key(text: str, core: str) -> None:
+    """Bitcoin Core v32.1.0's listdescriptors, with its private flag.
+
+    Each row was imported on regtest and listed back. Core looks a key up
+    by the key itself, and an x-only key as its even key, then its odd one.
+    """
+    wifs: dict[str, str] = {}
+    descriptor = parse(text, "regtest", wifs=wifs)
+    assert add_checksum(private_string(descriptor, None, None, wifs)) == core
+
+
+def test_a_wif_of_another_key_under_the_other_spelling_is_skipped() -> None:
+    """Filed for the even key, it is no WIF of the odd one: hex is written."""
+    descriptor = parse(f"wpkh({KEY})", "regtest")
+    assert private_string(descriptor, None, None, {XONLY: _NEG}) == f"wpkh({KEY})"
+    assert private_string(descriptor, None, None, {XONLY: _W}) == f"wpkh({_W})"
+
+
+def test_private_string_refuses_what_is_no_wif_under_the_other_spelling() -> None:
+    """A malformed entry is refused wherever it is looked up, unquoted."""
+    descriptor = parse(f"wpkh({KEY})", "regtest")
+    with pytest.raises(BTClibValueError, match="no regtest WIF of its key") as e:
+        private_string(descriptor, None, None, {XONLY: "not a key"})
+    assert_secret_free(e.value, ["not a key"])
+    descriptor = parse(f"tr({XONLY})", "regtest")
+    with pytest.raises(BTClibValueError, match="whitespace around it"):
+        private_string(descriptor, None, None, {_EVEN: f" {_NEG}"})
 
 
 def test_the_parsed_descriptor_holds_no_wif() -> None:

@@ -200,36 +200,99 @@ def _pub_key_text(key: KeyExpression) -> str:
     return (pub_key[1:] if key.x_only else pub_key).hex()
 
 
-def _printed_pub_key(key: KeyExpression) -> str:
-    """Return the fixed key `KeyExpression.__str__` writes.
+def _spellings(pub_key: bytes) -> tuple[str, ...]:
+    """Return the hex texts a WIF of `pub_key` may be filed under.
 
-    Its hex, or inside `descriptors.private_string` the WIF its `wifs`
-    file under that hex. An entry that is no WIF of this key on the
-    descriptor's network is refused, quoting none of it, since the text
-    written would not be this descriptor's. So is one padded with
-    whitespace, which btclib strips before it decodes and `parse` refuses.
-    An entry for an x-only key is checked by its x coordinate.
+    Its own hex, and for a 33-byte key its x-only hex too, which is how
+    the same key is written inside a ``tr()``.
+    """
+    if len(pub_key) == 33:
+        return pub_key.hex(), pub_key[1:].hex()
+    return (pub_key.hex(),)
+
+
+def _file_wif(key: KeyExpression, wif: str, wifs: MutableMapping[str, str]) -> None:
+    """File `wif` in `wifs`, as the `descriptors` module docstring says.
+
+    Which of two WIFs is the even key's is read from its public key, so
+    which one the x-only hex keeps does not depend on the order of two
+    parses on different networks. `descriptors.private_string` still
+    refuses an entry of another network that it reads.
     """
     text = _pub_key_text(key)
-    printed = _PRINTED_WIFS.get()
-    wifs, network = printed or (None, "")
-    wif = wifs.get(text) if wifs else None
-    if wif is None:
-        return text
+    pub_key = key.pub_key or b""
+    if key.x_only:
+        filed = wifs.get(text)
+        filed_key = _filed_pub_key(filed)
+        if filed_key == b"\x02" + pub_key[1:] and pub_key[0] == 3:
+            wifs[pub_key.hex()] = wif
+            return
+        if filed_key == b"\x03" + pub_key[1:] and pub_key[0] == 2:
+            wifs[filed_key.hex()] = wifs[text]
+    wifs[text] = wif
+
+
+def _filed_pub_key(wif: object) -> bytes:
+    """Return the public key of a WIF on any network, empty for what is none."""
+    if not isinstance(wif, str):
+        return b""
+    try:
+        return b58.prv_key_data_from_wif(wif).pub.sec
+    except (TypeError, ValueError):
+        return b""
+
+
+def _wif_pub_key(wif: str, network: str) -> bytes:
+    """Return the public key of a `wifs` entry, refusing what is no WIF.
+
+    The refusal quotes none of the entry. A padded entry is refused too,
+    since btclib strips it before it decodes and `parse` refuses it.
+    """
     if not isinstance(wif, str):
         err_msg = f"invalid wifs entry type: {type(wif).__name__}"  # type: ignore[unreachable]
         raise BTClibTypeError(err_msg)
     if wif.strip() != wif:
         raise BTClibValueError("invalid wifs entry: whitespace around it")
-    # compared outside the handler, so that the refusal chains no error
+    # decoded outside the handler, so that the refusal chains no error
     # of btclib's
     try:
-        sec = b58.prv_key_data_from_wif(wif, network).pub.sec
+        pub_key = b58.prv_key_data_from_wif(wif, network).pub.sec
     except (TypeError, ValueError):
-        sec = b""
-    if (sec[1:] if key.x_only else sec).hex() != text:
+        pub_key = b""
+    if not pub_key:
         raise BTClibValueError(f"invalid wifs entry: no {network} WIF of its key")
-    return wif
+    return pub_key
+
+
+def _printed_pub_key(key: KeyExpression) -> str:
+    """Return the fixed key `KeyExpression.__str__` writes.
+
+    Its hex, or inside `descriptors.private_string` a WIF of it that its
+    `wifs` hold, looked for as that function's docstring says. Each entry
+    is decoded once. A refusal quotes none of the entry, since the text
+    written would not be this descriptor's. An entry for an x-only key,
+    under its own hex, is checked by its x coordinate.
+    """
+    text = _pub_key_text(key)
+    wifs, network = _PRINTED_WIFS.get() or (None, "")
+    if not wifs:
+        return text
+    pub_key = key.pub_key or b""
+    keys = (b"\x02" + pub_key[1:], b"\x03" + pub_key[1:]) if key.x_only else (pub_key,)
+    found: dict[bytes, str] = {}
+    for spelling in dict.fromkeys(s for k in keys for s in _spellings(k)):
+        wif = wifs.get(spelling)
+        if wif is None:
+            continue
+        wif_key = _wif_pub_key(wif, network)
+        if spelling == text and wif_key not in keys:
+            err_msg = f"invalid wifs entry: no {network} WIF of its key"
+            raise BTClibValueError(err_msg)
+        # an entry is of the key its spelling names: under x-only hex,
+        # either key of that x coordinate
+        if wif_key in keys and spelling in _spellings(wif_key):
+            found.setdefault(wif_key, wif)
+    return next((found[k] for k in keys if k in found), text)
 
 
 @contextmanager
@@ -493,7 +556,7 @@ class KeyExpression:
         key to write and `ToPrivateString` taking the private material
         back from the caller. `descriptors.private_string` is the second
         one: inside it, this writes the xprv its `prv_keys` file under the
-        xpub, and the WIF its `wifs` file under the public key's hex.
+        xpub, and a WIF of the public key that its `wifs` hold.
 
         An x-only key is written as the 32 bytes a ``tr()`` holds, which
         is the spelling it was read in and the only one allowed there.
@@ -1464,5 +1527,5 @@ def _read_key(
         raise BTClibValueError("uncompressed public keys are not allowed here")
     wifs = _FILED_WIFS.get()
     if key_expression.wif_prefix and wifs is not None:
-        wifs[_pub_key_text(key_expression)] = key
+        _file_wif(key_expression, key, wifs)
     return key_expression

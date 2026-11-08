@@ -92,6 +92,12 @@ public key on the way in, this module deriving nothing from it and
 signing nothing with it, and it goes back through a `wifs` mapping of
 its own, keyed by the hex `str` writes for that public key.
 
+An x-only key is the x coordinate of two public keys, an even one and an
+odd one, so two WIFs may be read for it. Where both are, `wifs` keeps the
+even key's under the x-only hex, the one Bitcoin Core's `GetKeyByXOnly`
+finds first, and the odd key's under that key's 33-byte hex, as `str`
+writes it in a ``musig()``.
+
 Nor does a parsed descriptor hold a hash preimage. A hash fragment's
 ``preimage(HEX)`` is read to the digest the node keeps, and the preimage
 goes back through the `preimages` mapping a caller passes in, keyed by
@@ -3674,13 +3680,21 @@ def private_string(
 
     Bitcoin Core's `ToPrivateString`, the private twin of `str`: an xpub
     that `prv_keys` names is written as the xprv filed under it, a public
-    key that `wifs` names as the WIF filed under its hex, and a hash
-    fragment as ``preimage(HEX)`` where `preimages` holds, under its
-    digest, a preimage that fragment's hash takes to it. The mappings are
-    what `parse` hands back. What none names is written as `str` writes
-    it. An entry that is no xprv of its xpub is refused, and so is one
-    that is no WIF of its key on the descriptor's network, and a preimage
-    that is no 32 bytes.
+    key as a WIF of it that `wifs` holds, and a hash fragment as
+    ``preimage(HEX)`` where `preimages` holds, under its digest, a
+    preimage that fragment's hash takes to it. The mappings are what
+    `parse` hands back. What none names is written as `str` writes it.
+    An entry that is no xprv of its xpub is refused, and so is one that is
+    no WIF on the descriptor's network, and a preimage that is no 32
+    bytes.
+
+    Core finds a key by the key itself, wherever it was read. So a WIF
+    is looked for under each hex a key is written in: its 33 bytes, and
+    the x-only hex a ``tr()`` writes. An x-only key is looked for as its
+    even key, then as its odd one, as Core's `GetKeyByXOnly` does. The
+    entry under the hex `str` writes is refused where it is no WIF of
+    that key; one under the other hex that is the WIF of another key is
+    skipped, as Core finds no key there.
 
     ``preimage(HEX)`` is no BIP's syntax, as the `miniscript` module
     docstring says.
