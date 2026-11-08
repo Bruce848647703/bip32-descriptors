@@ -59,12 +59,10 @@ excluded-modules = []
 # first session says about the trade is that some of the `|` mutants it
 # ran were *killed*, which no annotation's ever is.
 #
-# The session is a sample and not a sweep, and the reason to keep
-# sampling rather than to shrink the scope is the engine's: the
-# verdicts in a slice are stable, so one that changes is a test that
-# stopped checking what it used to. What it judged is read off the
-# `descriptors-survivors.txt` the workflow uploads, at btclib's run
-# 34833390559.
+# The session is a sample and not a sweep: the comment on the budgets in
+# .github/workflows/mutation.yml says what a sample is worth. The
+# survivors triaged below are read off the `descriptors-survivors.txt`
+# the workflow uploads, at btclib's run 34833390559.
 #
 # This file triages the non-annotation survivors of `miniscript.py`, not
 # those of descriptors.py and key_expression.py, and they split into

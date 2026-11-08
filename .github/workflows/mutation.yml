@@ -67,12 +67,25 @@ jobs:
       # keyed on, the ceiling in minutes, and the sessions in the order
       # they run. The callee's `profiles` input describes that shape.
       #
-      # Each budget is a sample rather than a finished session: the weekly
-      # job cuts the session there and reports what it judged, and the
-      # verdicts in a sample of the same slice are stable, so one that
-      # changes is a test that stopped checking what it used to. The
-      # ceiling is the budget plus the environment. The budgets are
-      # btclib-wallet's, where these sessions ran before they moved
+      # Each budget is a sample rather than a finished session. Every run
+      # starts a new session, cosmic-ray takes its mutants in random
+      # order, and the job cuts the session at the budget and reports
+      # what it judged, so each run judges a different part of a profile.
+      # A verdict can change between two runs that both judged a mutant
+      # with no check lost where a timeout fired (it is answered KILLED,
+      # and a loaded runner is slower) or a property test drew different
+      # examples. Where neither applies, a kill that a later run lets
+      # live is read against what changed in the tests and the code in
+      # between: it may be a test that stopped checking what it used to.
+      #
+      # The ceiling is the budget plus the environment. The budgets are
+      # btclib-wallet's, where these sessions ran before they moved.
+      #
+      # No run carries anything to the next, so where a budget cuts its
+      # session, no set of runs is sure to have judged every mutant of that
+      # profile. How much of a profile a run judged is the line the callee's
+      # mutation_counts.py prints for each session in the "Write the
+      # reports" step.
       profiles: >-
         [{"profile": "extended keys", "slug": "keys", "ceiling": 65, "sessions":
         "bip32.toml 45m"},
