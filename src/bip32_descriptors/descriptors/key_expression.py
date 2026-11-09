@@ -218,11 +218,12 @@ def _file_wif(key: KeyExpression, wif: str, wifs: MutableMapping[str, str]) -> N
     Which of two WIFs is the even key's is read from its public key, so
     which one the x-only hex keeps does not depend on the order of two
     parses on different networks. `descriptors.private_string` still
-    refuses an entry of another network that it reads.
+    refuses an entry of another network that it reads. The key of `wif`
+    is decoded from `wif`, since an x-only `key` holds the even one.
     """
     text = _pub_key_text(key)
-    pub_key = key.pub_key or b""
     if key.x_only:
+        pub_key = _filed_pub_key(wif)
         filed = wifs.get(text)
         filed_key = _filed_pub_key(filed)
         if filed_key == b"\x02" + pub_key[1:] and pub_key[0] == 3:
@@ -390,7 +391,7 @@ class KeyExpression:
 
         A `pub_key` is the SEC bytes of a point, as `_assert_pub_key` says,
         and the whole key: no `xkey`, `participants`, `der_path` or
-        `wildcard` beside it. `x_only` takes a `pub_key` of 33 bytes.
+        `wildcard` beside it. `x_only` takes a 0x02 `pub_key` of 33 bytes.
         `participants` make a ``musig()`` as `_assert_musig` says.
         `wildcard` is None, 0 or 2**31. `hardening` is one of the two
         symbols BIP380 allows. A refusal quotes no key, beyond the prefix
@@ -877,9 +878,10 @@ def _assert_pub_key(key: KeyExpression) -> None:
 
     With `parse`'s messages, except for a size, which `parse` counts in
     characters of hex, and for what it never reads: bytes of another type,
-    and an x-only key with no `pub_key`. An x-only key is held in 33
-    bytes. `parse` reads an uncompressed WIF in a taproot position to one
-    of 65, which this refuses with the message `parse` gives for it.
+    and an x-only key with no `pub_key` or with a 0x03 prefix. An x-only
+    key is held in the 33 bytes of its even-y form. `parse` reads an
+    uncompressed WIF in a taproot position to one of 65, which this
+    refuses with the message `parse` gives for it.
     """
     pub_key = key.pub_key
     if pub_key is None:
@@ -901,6 +903,8 @@ def _assert_pub_key(key: KeyExpression) -> None:
     point_from_pub_key(pub_key)
     if key.x_only and size != 33:
         raise BTClibValueError(_UNCOMPRESSED_REFUSED)
+    if key.x_only and prefix == 3:
+        raise BTClibValueError("invalid x-only key prefix: 0x03")
 
 
 def _assert_fixed_key_alone(key: KeyExpression) -> None:
@@ -1311,6 +1315,11 @@ def _fixed_pub_key(key: str, *, x_only: bool) -> tuple[bytes, bool]:
     -- `false` for a hex key it read whole, `ctx == ParseScriptContext::
     P2TR` for a private one -- which is what makes its ``tr(WIF)`` and
     ``rawtr(WIF)`` vectors come back in 32 bytes and not 33.
+
+    An x-only WIF key is lifted to its even-y form, as a 32-byte hex key
+    is, so that the text `str` writes for it reads back as the same key.
+    Core keeps the WIF's own key instead. An uncompressed WIF key is left
+    as it is, for the constructor to refuse.
     """
     if _HEX.fullmatch(key):
         return _pub_key_from_hex(key, x_only=x_only)
@@ -1318,9 +1327,12 @@ def _fixed_pub_key(key: str, *, x_only: bool) -> tuple[bytes, bool]:
     # btclib-org/btclib#1188): prv_key_data_from_wif answers both for it and for
     # characters that are no key expression at all
     try:
-        return b58.prv_key_data_from_wif(key).pub.sec, x_only
+        pub_key = b58.prv_key_data_from_wif(key).pub.sec
     except (TypeError, ValueError) as e:
         raise BTClibValueError("invalid key expression") from e
+    if x_only and len(pub_key) == 33:
+        return b"\x02" + pub_key[1:], True
+    return pub_key, x_only
 
 
 def _assert_network(keys: tuple[KeyExpression, ...], network: str) -> None:

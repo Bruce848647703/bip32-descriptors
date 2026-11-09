@@ -795,16 +795,16 @@ def test_a_hardened_key_without_its_private_key_is_compared_as_written(
     "keys, repeated",
     [
         ((CHILD[2:], "02" + CHILD[2:]), True),
-        ((CHILD[2:], "03" + CHILD[2:]), False),
-        (("02" + CHILD[2:], "03" + CHILD[2:]), False),
+        ((CHILD[2:], "03" + CHILD[2:]), True),
+        (("02" + CHILD[2:], "03" + CHILD[2:]), True),
         ((f"{XPUB}/1", f"{XPUB}/2"), False),
         ((f"{XPRV}/1h", f"{XPRV}/2h"), False),
     ],
 )
-def test_a_tapscript_key_counts_as_its_even_y_form(
+def test_a_tapscript_key_counts_as_its_x_coordinate(
     keys: tuple[str, str], *, repeated: bool
 ) -> None:
-    """Compare 33-byte keys, parity included, as Core does."""
+    """Compare the 32 bytes the script holds; Core compares the parity too."""
     expression = f"or_i(pk({keys[0]}),pk({keys[1]}))"
     assert parse(expression, TAPSCRIPT).has_duplicate_keys() == repeated
 

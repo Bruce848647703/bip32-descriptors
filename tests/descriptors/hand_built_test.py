@@ -1013,14 +1013,6 @@ def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:
         KeyExpression(pub_key=_UNCOMPRESSED, x_only=True)
 
 
-def test_an_odd_x_only_key_is_built_as_parse_builds_it() -> None:
-    """The control: a WIF in a ``tr()`` keeps the 0x03 byte of its key."""
-    (key,) = parse(f"tr({_ODD_WIF})").key_expressions
-    assert key.pub_key is not None
-    assert key.pub_key[0] == 3
-    assert KeyExpression(pub_key=key.pub_key, x_only=True) == key
-
-
 @pytest.mark.parametrize(
     "script,context",
     [
@@ -1262,3 +1254,17 @@ def test_a_musig_parse_builds_has_the_hardening_h() -> None:
     assert key.hardening == "h"
     assert key.participants[0].hardening == "'"
     assert parse(str(TrDescriptor(key))).key_expressions == (key,)
+
+
+def test_an_odd_x_only_key_is_refused_as_parse_lifts_it() -> None:
+    """`parse` holds the odd key of a WIF in a ``tr()`` as its even-y form."""
+    odd = b58.prv_key_data_from_wif(_ODD_WIF).pub.sec
+    assert odd[0] == 3
+    (key,) = parse(f"tr({_ODD_WIF})").key_expressions
+    assert key == KeyExpression(pub_key=b"\x02" + odd[1:], x_only=True)
+    with pytest.raises(BTClibValueError, match="^invalid x-only key prefix: 0x03$"):
+        KeyExpression(pub_key=odd, x_only=True)
+    with pytest.raises(BTClibValueError, match="^invalid x-only key prefix: 0x03$"):
+        replace(key, pub_key=odd)
+    # the control: the same key is built where it is not x-only
+    assert KeyExpression(pub_key=odd).pub_key == odd
