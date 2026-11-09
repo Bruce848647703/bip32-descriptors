@@ -62,7 +62,8 @@ excluded-modules = []
 # The session is a sample and not a sweep: the comment on the budgets in
 # .github/workflows/mutation.yml says what a sample is worth. The
 # survivors triaged below are read off the `descriptors-survivors.txt`
-# the workflow uploads, at btclib's run 34833390559.
+# the workflow uploads, at btclib's run 34833390559, except where a
+# paragraph names its own run.
 #
 # This file triages the non-annotation survivors of `miniscript.py`, not
 # those of descriptors.py and key_expression.py, and they split into
@@ -71,18 +72,35 @@ excluded-modules = []
 # - the type-property algebra, which is what this scope was written to
 #   ask about -- and the class is smaller than the survivor list makes it
 #   look. BIP379's composition rules are a chain of terms, and almost
-#   every term selects letters no other term contributes: measured over
-#   the fixed expressions in miniscript_fixed_tests.json and one
-#   composite of each family, most single-term `|` in those rules
-#   change no fragment's properties when they become a symmetric
-#   difference. They are equivalent by disjointness rather than
-#   untested.
+#   every term selects letters no other term contributes. A `|` turned
+#   into `^` binds tighter than the `|` around it, so it joins the term
+#   before it to its own, and two terms with no letter in common have the
+#   same union and symmetric difference. Read on the code, these are
+#   equivalent that way: in `d:`, its "o" and "e" terms; in `v:`,
+#   `x & _t("ghijkzonms")` and `_t("fx")`; in `and_v`, its "s" and "f"
+#   terms; in `and_b`, `_t("ux")` and the timelocks, which are letters of
+#   "ghijk"; in `or_c`, its "o" and "m" terms; in `andor`, its "BKV" and
+#   "z" terms, and its "m" and "s" terms.
 #
-#   The rest combine the *operands*: the timelocks of a
+#   These operators of these rules are equivalent for reasons of their
+#   own. `_wrapper_properties`' `fragment == "d:"` weakened to `<=`: "a:"
+#   and "c:" are tested before it, and the other wrappers sort after
+#   "d:". And `and_b`'s "o" term, `(x | y) & _t("o")` narrowed to
+#   `(x & y) & _t("o")`: an `and_b` has a type only where Y is a "W",
+#   which only `a:` and `s:` make, and neither makes it "z" or "o". So
+#   where the term applies, X is the one that is "z", and no rule makes a
+#   fragment both "z" and "o": neither form gives an "o". The other
+#   survivors of these rules in the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   die in tests/descriptors/type_rules_test.py (issue
+#   btclib-org/bip32-descriptors#41).
+#
+#   Of btclib's run, the rest combine the *operands*: the timelocks of a
 #   conjunction and of a disjunction, `(x | y) & _t("ghij")`, and `or_b`'s
 #   and `or_i`'s non-malleability, `_has(x | y, "s")`. A letter both
 #   branches carry is a letter the composite keeps only if the rule is a
-#   union, and the tests beside this commit assert the exact property set
+#   union, and `test_a_composite_inherits_a_property_from_either_branch`
+#   in tests/descriptors/miniscript_test.py asserts the exact property set
 #   of the four shortest fragments that show it -- two `older()` branches
 #   for the timelock, two signed branches for the "m". All four mutants
 #   are dead now, and the assertions are on the properties themselves
