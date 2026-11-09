@@ -113,6 +113,27 @@ excluded-modules = []
 #   catches it. The prefix width wants a script whose push needs
 #   OP_PUSHDATA, which no standard fragment writes: every key is 33
 #   bytes and every hash 20 or 32.
+#
+#   Read off the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41), the survivors of the sizes,
+#   the witness and stack bounds and the `multi_a()` key count that change
+#   an answer die in tests/descriptors/resource_bounds_test.py. These
+#   operators are equivalent:
+#   - `_MAX_TAPSCRIPT_SAT_SIZE`'s `var_int_serialize(33 + 32 * 128)` turned
+#     into `34 + 32 * 128`: only its length is read, and 4129 and 4130
+#     both take three bytes.
+#   - `_computed_script_size`'s `node.subs[0]` turned into `node.subs[-1]`
+#     for a `v:`, which has one subexpression.
+#   - `_NOP = _Trace(0, 0)` turned into `_Trace(0, -1)`: `_NOP` is only
+#     ever the second operand of `_concat`, after `_PUSH` or
+#     `_EQUALVERIFY`, and the peak `_concat` then answers is the larger of
+#     `_NOP`'s and the first operand's, which is 0 or 2.
+#   - `_pub_key_size`'s `context == TAPSCRIPT` weakened to `>=`: a node's
+#     context is "P2WSH" or "tapscript", `_assert_shape` refusing any
+#     other, and "P2WSH" sorts before "tapscript".
+#   - `_leaf_witness`'s `1 + 32` for a hash preimage turned into `1 | 32`,
+#     which is 33 too.
 # - the fragment dispatch, weakened from `==` to `>=` at several
 #   dispatch points: equivalent wherever the fragment compared is the
 #   alphabetical extreme of the closed set it comes from, which is the
