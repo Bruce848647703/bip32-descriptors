@@ -67,7 +67,10 @@ The grammar read is BIP380 to BIP390:
   ``pk()``, ``pkh()`` and ``multi()`` that belong to both grammars are the
   descriptor functions they were before miniscript, and what is left is a
   miniscript -- of the P2WSH dialect inside ``wsh()`` and of the tapscript
-  one inside ``tr()``, which is where ``multi_a()`` replaces ``multi()``
+  one inside ``tr()``, which is where ``multi_a()`` replaces ``multi()``.
+  Inside ``wsh()``, a miniscript BIP379 writes as one of those functions,
+  such as ``c:pk_k()`` written ``pk()``, is read as that function, so
+  that its text parses back
 
 `satisfy` takes a `SpendContext` beside the signatures for the one
 fragment that reads more than they carry: a miniscript satisfaction
@@ -1833,7 +1836,9 @@ class MiniscriptDescriptor(Descriptor):
     A miniscript any of whose nodes is not of the P2WSH context, or that
     holds a ``musig()`` or an x-only key, is refused when built, and so is
     one `parse` refuses without `prv_keys`, since the descriptor would not
-    parse back from its text.
+    parse back from its text. So is one whose text `parse` reads as a
+    descriptor function, such as ``pk()``, ``pkh()`` or ``multi()``: it
+    would parse back as that function.
     """
 
     node: Miniscript
@@ -1846,6 +1851,10 @@ class MiniscriptDescriptor(Descriptor):
         # `Miniscript` refuses these keys in a P2WSH node when it is built,
         # and an unpickled node skips that check
         _assert_keys_outside_taproot(self.node.key_expressions)
+        name = _function_read(str(self.node))
+        if name is not None:
+            err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
+            raise BTClibValueError(err_msg)
         if not _SANE_BY_PARSE.get():
             _assert_sane_script(self.node)
 
@@ -2703,6 +2712,16 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     _assert_position(name, context, _PARSERS[name][0])
 
 
+def _function_read(text: str) -> str | None:
+    """Return the function `_parse_expression` reads a text as, else None.
+
+    A text ending in ")" whose name `_PARSERS` holds, which it reads
+    before it tries a miniscript.
+    """
+    name = text.partition("(")[0]
+    return name if text.endswith(")") and name in _PARSERS else None
+
+
 def _one_argument(arguments: list[str], name: str) -> str:
     if len(arguments) != 1:
         err_msg = f"{name}() takes one argument, {len(arguments)} given"
@@ -3296,6 +3315,14 @@ _PARSERS: dict[
 }
 
 
+# the key fragments a ``c:`` over which BIP379 writes as a descriptor
+# function, and that function's fragment
+_KEY_FUNCTIONS: dict[str, type[PkDescriptor | PkhDescriptor]] = {
+    "pk_k": PkDescriptor,
+    "pk_h": PkhDescriptor,
+}
+
+
 def _parse_miniscript_expression(
     expression: str, context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
@@ -3307,6 +3334,9 @@ def _parse_miniscript_expression(
     a third party can rewrite, or whose timelocks contradict each other, is
     not one to hand a wallet. `miniscript.parse` on its own answers for the
     language and leaves the judgement to the caller.
+
+    A ``c:pk_k()`` or a ``c:pk_h()``, written ``pk()`` and ``pkh()``, is
+    returned as that function, which its text parses back to.
     """
     if expression.startswith("multi("):
         _read_unclosed_multisig_keys(
@@ -3321,6 +3351,11 @@ def _parse_miniscript_expression(
             _filed_wifs(),
         )
         _assert_sane(node, prv_keys)
+    if node.fragment == "c:" and node.subs[0].fragment in _KEY_FUNCTIONS:
+        # the node's own key, which keeps what its text does not, such as
+        # the prefix of a WIF that `parse` checks against the network
+        function = _KEY_FUNCTIONS[node.subs[0].fragment]
+        return function(node.subs[0].keys[0], network=network)
     with _sane_by_parse():
         return MiniscriptDescriptor(node, network=network)
 

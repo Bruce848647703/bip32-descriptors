@@ -732,10 +732,13 @@ def test_the_issue_s_inner_fragments_are_refused_when_built(
 @pytest.mark.parametrize(
     "expression,read_as",
     [
-        (f"pk({_K})", "PkDescriptor"),
+        (
+            f"and_v(v:pk({_K}),older(1))",
+            "Miniscript expressions can only be used in wsh or tr.",
+        ),
         (f"and_v(v:multi(1,{_K},{_K2}),older(1))", "A function is needed within P2SH"),
     ],
-    ids=["pk", "and_v-over-multi"],
+    ids=["and_v-over-pk", "and_v-over-multi"],
 )
 def test_a_miniscript_inside_sh_is_refused_whatever_its_text_reads_as(
     expression: str, read_as: str
@@ -743,7 +746,7 @@ def test_a_miniscript_inside_sh_is_refused_whatever_its_text_reads_as(
     """With the position fault `parse` names for a miniscript there.
 
     `parse` never builds a `MiniscriptDescriptor` inside ``sh()``, and
-    its text there can read as something else: a `PkDescriptor`, or
+    its text there reads as a miniscript `parse` refuses there, or as
     nothing `parse` accepts, ``multi()`` being no tapscript fragment.
     """
     node = MiniscriptDescriptor(miniscript.parse(expression))
@@ -1268,3 +1271,83 @@ def test_an_odd_x_only_key_is_refused_as_parse_lifts_it() -> None:
         replace(key, pub_key=odd)
     # the control: the same key is built where it is not x-only
     assert KeyExpression(pub_key=odd).pub_key == odd
+
+
+# P2WSH miniscripts whose text `parse` reads as a descriptor function, and
+# the fragment it reads
+_READ_AS_FUNCTION = [
+    (f"pk({_K})", PkDescriptor),
+    (f"c:pk_k({_K})", PkDescriptor),
+    (f"pkh({_K})", PkhDescriptor),
+    (f"c:pk_h({_K})", PkhDescriptor),
+    (f"multi(1,{_K},{_K2})", MultiDescriptor),
+    (f"rawpkh({'00' * 20})", RawPkhDescriptor),
+]
+
+
+@pytest.mark.parametrize(
+    "expression,cls",
+    _READ_AS_FUNCTION,
+    ids=[e.partition("(")[0] for e, _ in _READ_AS_FUNCTION],
+)
+def test_a_miniscript_parse_reads_as_a_function_is_refused_when_built(
+    expression: str, cls: type[Descriptor]
+) -> None:
+    """Built directly or by `replace`, naming the function.
+
+    Inside ``wsh()`` its text parses back as that function, and so does
+    the expression. Issue btclib-org/bip32-descriptors#174.
+    """
+    node = miniscript.parse(expression)
+    read = cast("WshDescriptor", parse(f"wsh({node})"))
+    assert type(read.inner) is cls
+    assert parse(f"wsh({expression})") == read
+    name = re.escape(str(node).partition("(")[0])
+    err_msg = rf"^parse reads {name}\(\) as a descriptor function, not a miniscript$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MiniscriptDescriptor(node)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(cast("MiniscriptDescriptor", _PARSED[MiniscriptDescriptor]), node=node)
+
+
+@pytest.mark.parametrize("template", ["wsh({})", "sh(wsh({}))"])
+@pytest.mark.parametrize(
+    "written,read_as",
+    [(f"c:pk_k({_K})", f"pk({_K})"), (f"c:pk_h({_K})", f"pkh({_K})")],
+    ids=["c:pk_k", "c:pk_h"],
+)
+def test_parse_reads_a_miniscript_written_as_a_function_as_that_function(
+    written: str, read_as: str, template: str
+) -> None:
+    """Which its text parses back to, as no `MiniscriptDescriptor` would."""
+    parsed = parse(template.format(written))
+    assert parsed == parse(template.format(read_as))
+    assert parse(str(parsed)) == parsed
+
+
+@pytest.mark.parametrize(
+    "wif,network",
+    [
+        (b58.wif_from_prv_key(1, "mainnet", compressed=True), "regtest"),
+        (b58.wif_from_prv_key(1, "testnet", compressed=True), "mainnet"),
+    ],
+    ids=["mainnet-wif-on-regtest", "testnet-wif-on-mainnet"],
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "wsh(c:pk_k({}))",
+        "wsh(c:pk_h({}))",
+        "sh(wsh(c:pk_k({})))",
+        "sh(wsh(c:pk_h({})))",
+    ],
+)
+def test_a_miniscript_read_as_a_function_keeps_its_wif_network_check(
+    template: str, wif: str, network: str
+) -> None:
+    """A WIF of another network is refused, as inside ``pk()``."""
+    err_msg = rf"^key 0: not a {network} key: WIF prefix$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"wsh(pk({wif}))", network)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(template.format(wif), network)
