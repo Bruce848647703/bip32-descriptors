@@ -949,10 +949,11 @@ def _assert_musig(key: KeyExpression) -> None:
 
     Each participant is a `KeyExpression`, neither a ``musig()`` nor
     x-only nor uncompressed, and the ``musig()`` has no `xkey` and no
-    `origin`, which `str` would not write. A path or a wildcard on it
-    takes extended participants none of which is ranged, and no hardened
-    step or wildcard. A refusal carries `parse`'s message, except for a
-    type and an `xkey`, for which `parse` has none.
+    `origin`, which `str` would not write. Its `hardening` is `h`, which
+    `parse` gives every ``musig()``. A path or a wildcard on it takes
+    extended participants none of which is ranged, and no hardened step
+    or wildcard. A refusal carries `parse`'s message, except for a type,
+    an `xkey` and a `hardening`, for which `parse` has none.
     """
     participants = key.participants
     if not participants:
@@ -965,6 +966,8 @@ def _assert_musig(key: KeyExpression) -> None:
         raise BTClibValueError("a musig() takes no xkey")
     if key.origin is not None:
         raise BTClibValueError(_MUSIG_IN_ORIGIN)
+    if key.hardening != _HARDENING:
+        raise BTClibValueError("invalid musig() hardening symbol: h expected")
     _assert_participants(participants)
     if key.der_path or key.wildcard is not None:
         _assert_musig_path(key)

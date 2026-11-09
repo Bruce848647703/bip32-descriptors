@@ -28,6 +28,9 @@ participant that is a ``musig()``, x-only, uncompressed or no
 it hardens, or where a participant is not extended or is ranged. A
 wildcard is refused unless it is None, 0 or 2**31. Issue
 btclib-org/bip32-descriptors#179.
+
+A ``musig()`` whose `hardening` is not h is refused too. Issue
+btclib-org/bip32-descriptors#181.
 """
 
 from __future__ import annotations
@@ -1074,7 +1077,7 @@ def test_a_hardening_symbol_of_another_type_is_refused() -> None:
 @pytest.mark.parametrize("hardening", ["h", "'"])
 def test_a_key_of_either_hardening_symbol_is_built(hardening: str) -> None:
     """The control: either symbol BIP380 allows is built."""
-    for key in (_C_KEY, _RANGED_KEY, _MUSIG):
+    for key in (_C_KEY, _RANGED_KEY):
         rebuilt = replace(key, hardening=hardening)
         assert rebuilt.hardening == hardening
 
@@ -1230,3 +1233,32 @@ def test_a_musig_of_wallet_policy_placeholders_is_built() -> None:
     assert template == "tr(musig(@0,@1)/*)"
     placeholders = tuple(KeyExpression(xkey=f"@{i}") for i in range(2))
     assert KeyExpression(participants=placeholders, wildcard=0).is_aggregate
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: replace(_MUSIG, hardening="'"),
+        lambda: KeyExpression(participants=_MUSIG_PAIR, hardening="'"),
+        lambda: KeyExpression(
+            participants=_EXTENDED, der_path=(1,), wildcard=0, hardening="'"
+        ),
+    ],
+    ids=["replace", "musig", "musig path"],
+)
+def test_a_musig_whose_hardening_is_not_h_is_refused(
+    build: Callable[[], KeyExpression],
+) -> None:
+    """`str` writes it as the ``musig()`` with h, which `parse` reads back."""
+    err_msg = r"^invalid musig\(\) hardening symbol: h expected$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        build()
+
+
+def test_a_musig_parse_builds_has_the_hardening_h() -> None:
+    """The control: whatever symbol its participants are spelled with."""
+    text = f"tr(musig([deadbeef/1']{_XPUB_A}/0'/1,{_XPUB_B})/2/*)"
+    (key,) = parse(text).key_expressions
+    assert key.hardening == "h"
+    assert key.participants[0].hardening == "'"
+    assert parse(str(TrDescriptor(key))).key_expressions == (key,)
