@@ -1319,8 +1319,9 @@ class Descriptor(ABC):
         somewhere else, which is why this is one method and not two.
         Answered by the fragments that are a script another one embeds
         -- ``pk``, ``pkh``, ``wpkh``, ``multi`` -- and refused by the
-        rest. The grammar refuses those in an embedding position too, so
-        what this answers is a descriptor built by hand.
+        rest. `parse`, and ``sh()`` and ``wsh()`` when built, refuse those
+        in an embedding position too, so what this answers is a
+        descriptor that skipped its build, as an unpickled one does.
         """
         err_msg = f"{type(self).__name__} is not a script another one embeds"
         raise BTClibValueError(err_msg)
@@ -1673,6 +1674,7 @@ class ShDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2SH)
 
     @override
     def __str__(self) -> str:
@@ -1737,6 +1739,7 @@ class WshDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2WSH)
 
     @override
     def __str__(self) -> str:
@@ -2677,6 +2680,27 @@ class UnusedDescriptor(Descriptor):
 def _assert_position(name: str, context: str, allowed: tuple[str, ...]) -> None:
     if context not in allowed:
         raise BTClibValueError(f"{name}() is not allowed inside {context}")
+
+
+def _assert_inner(inner: Descriptor, context: str) -> None:
+    """Refuse the argument of a ``sh()`` or a ``wsh()`` `parse` refuses there.
+
+    By the function name `str` writes, which `_PARSERS` says the
+    positions of, and with `parse`'s message. A miniscript is allowed
+    where `parse` reads one, and refused elsewhere with the position fault
+    `parse` names for it. A name `_PARSERS` does not hold, as a subclass
+    writing its own `str` can give, is refused naming the type: that text
+    is any value, a key included.
+    """
+    if isinstance(inner, MiniscriptDescriptor):
+        if context not in _MINISCRIPT_CONTEXTS:
+            raise BTClibValueError(_MINISCRIPT_OUTSIDE)
+        return
+    name = str(inner).partition("(")[0]
+    if name not in _PARSERS:
+        err_msg = f"{type(inner).__name__} writes no function parse reads"
+        raise BTClibValueError(f"{err_msg} inside {context}")
+    _assert_position(name, context, _PARSERS[name][0])
 
 
 def _one_argument(arguments: list[str], name: str) -> str:

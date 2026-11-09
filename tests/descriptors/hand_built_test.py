@@ -6,14 +6,16 @@
 
 A field of the wrong type, in every `Descriptor` fragment and in a
 `MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`,
-`MiniscriptDescriptor`, `UnusedDescriptor` and `MultiA` also refuse a
-value `parse` refuses, as a `BTClibValueError`, and every fragment
-holding a key that `parse` reads outside ``tr()`` and ``rawtr()``, and a
-P2WSH `Miniscript` node, refuses a ``musig()`` one and an x-only one.
-Issues btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
+`MiniscriptDescriptor`, `UnusedDescriptor`, `ShDescriptor`,
+`WshDescriptor` and `MultiA` also refuse a value `parse` refuses, as a
+`BTClibValueError`, and every fragment holding a key that `parse` reads
+outside ``tr()`` and ``rawtr()``, and a P2WSH `Miniscript` node, refuses
+a ``musig()`` one and an x-only one. Issues
+btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
 btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
 btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#150,
-btclib-org/bip32-descriptors#159 and btclib-org/bip32-descriptors#161.
+btclib-org/bip32-descriptors#158, btclib-org/bip32-descriptors#159 and
+btclib-org/bip32-descriptors#161.
 
 `KeyExpression` refuses a `pub_key` that `parse` refuses, an x-only key
 with no `pub_key`, a `pub_key` beside another key or a derivation, and a
@@ -34,7 +36,7 @@ import pickle
 import re
 from collections.abc import Callable
 from dataclasses import fields, replace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from btclib import b58
@@ -624,7 +626,8 @@ def _fragments(cls: type) -> list[type]:
 
 def test_every_field_of_every_fragment_has_a_wrong_type_tried() -> None:
     """The census: a fragment or a field added later is tried here too."""
-    assert set(_PARSED) == set(_fragments(Descriptor))
+    module = Descriptor.__module__
+    assert set(_PARSED) == {c for c in _fragments(Descriptor) if c.__module__ == module}
     tried = {(cls, name) for cls, name, _, _ in _WRONG}
     every = {(cls, f.name) for cls in _PARSED for f in fields(cls)}
     assert tried == every
@@ -667,6 +670,118 @@ def test_an_unused_ranged_key_is_refused_when_built() -> None:
         UnusedDescriptor(_RANGED_KEY)
     with pytest.raises(BTClibValueError, match=err_msg):
         replace(parsed, key=_RANGED_KEY)
+
+
+_WRAPPERS = {ShDescriptor: "sh", WshDescriptor: "wsh"}
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS, ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("cls", list(_PARSED), ids=lambda cls: cls.__name__)
+def test_an_inner_fragment_parse_refuses_is_refused_when_built(
+    cls: type[Descriptor], wrapper: type[ShDescriptor | WshDescriptor]
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    The census: every fragment inside ``sh()`` and ``wsh()``. One `parse`
+    takes there is built, and its text parses back. Issue
+    btclib-org/bip32-descriptors#158.
+    """
+    inner = _PARSED[cls]
+    parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
+    try:
+        by_parse = parse(f"{_WRAPPERS[wrapper]}({inner})")
+    except BTClibValueError as e:
+        err_msg = f"^{re.escape(str(e))}$"
+        with pytest.raises(BTClibValueError, match=err_msg):
+            wrapper(inner)
+        with pytest.raises(BTClibValueError, match=err_msg):
+            replace(parsed, inner=inner)
+    else:
+        assert wrapper(inner) == by_parse
+        assert replace(parsed, inner=inner) == by_parse
+
+
+@pytest.mark.parametrize(
+    "wrapper,cls,err_msg",
+    [
+        (ShDescriptor, TrDescriptor, r"^tr\(\) is not allowed inside sh\(\)$"),
+        (WshDescriptor, ComboDescriptor, r"^combo\(\) is not allowed inside wsh\(\)$"),
+        (ShDescriptor, UnusedDescriptor, r"^unused\(\) is not allowed inside sh\(\)$"),
+        (ShDescriptor, ShDescriptor, r"^sh\(\) is not allowed inside sh\(\)$"),
+        (WshDescriptor, ShDescriptor, r"^sh\(\) is not allowed inside wsh\(\)$"),
+        (WshDescriptor, WshDescriptor, r"^wsh\(\) is not allowed inside wsh\(\)$"),
+        (
+            ShDescriptor,
+            MiniscriptDescriptor,
+            r"^Miniscript expressions can only be used in wsh or tr\.$",
+        ),
+    ],
+    ids=lambda case: getattr(case, "__name__", ""),
+)
+def test_the_issue_s_inner_fragments_are_refused_when_built(
+    wrapper: type[ShDescriptor | WshDescriptor], cls: type[Descriptor], err_msg: str
+) -> None:
+    """The cases the census above derives from `parse`, written out."""
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(_PARSED[cls])
+
+
+@pytest.mark.parametrize(
+    "expression,read_as",
+    [
+        (f"pk({_K})", "PkDescriptor"),
+        (f"and_v(v:multi(1,{_K},{_K2}),older(1))", "A function is needed within P2SH"),
+    ],
+    ids=["pk", "and_v-over-multi"],
+)
+def test_a_miniscript_inside_sh_is_refused_whatever_its_text_reads_as(
+    expression: str, read_as: str
+) -> None:
+    """With the position fault `parse` names for a miniscript there.
+
+    `parse` never builds a `MiniscriptDescriptor` inside ``sh()``, and
+    its text there can read as something else: a `PkDescriptor`, or
+    nothing `parse` accepts, ``multi()`` being no tapscript fragment.
+    """
+    node = MiniscriptDescriptor(miniscript.parse(expression))
+    try:
+        read = type(cast("ShDescriptor", parse(f"sh({node})")).inner).__name__
+    except BTClibValueError as e:
+        read = str(e)
+    assert read == read_as
+    err_msg = r"^Miniscript expressions can only be used in wsh or tr\.$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        ShDescriptor(node)
+
+
+class _Renamed(PkDescriptor):
+    """A subclass writing a function name `parse` has no parser for."""
+
+    @override
+    def __str__(self) -> str:
+        return f"foo({self.key})"
+
+
+class _Bare(PkDescriptor):
+    """A subclass writing a key, as a text with no bracket to name."""
+
+    @override
+    def __str__(self) -> str:
+        return _RANDOM_HEX
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS, ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("cls", [_Renamed, _Bare], ids=lambda cls: cls.__name__)
+def test_an_inner_subclass_writing_no_function_parse_reads_is_refused(
+    cls: type[PkDescriptor], wrapper: type[ShDescriptor | WshDescriptor]
+) -> None:
+    """As a `BTClibValueError` naming the type, not quoting its text."""
+    inner = cls(_C_KEY)
+    context = re.escape(f"{_WRAPPERS[wrapper]}()")
+    err_msg = f"^{cls.__name__} writes no function parse reads inside {context}$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        wrapper(inner)
+    assert_secret_free(e.value, [_RANDOM_HEX, _C])
 
 
 (_MUSIG,) = parse(f"tr(musig({_K},{_K2}))").key_expressions

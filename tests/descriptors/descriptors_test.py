@@ -32,6 +32,7 @@ produces is the address of that very script.
 """
 
 import contextlib
+import pickle
 import re
 import sys
 import traceback
@@ -4031,14 +4032,17 @@ def test_the_missing_keys_are_named() -> None:
 def test_only_a_script_is_embeddable() -> None:
     """The wrappers have no stack of their own to be embedded with.
 
-    The grammar refuses `wsh(tr())` and `sh(addr())` and every other
-    such pair, so this is reachable only by building the descriptor
-    rather than parsing one -- which the dataclasses are public enough
-    to allow.
+    `parse`, and ``wsh()`` when built, refuse `wsh(tr())` and every other
+    such pair, so this is reachable only by a descriptor that skipped its
+    build, as an unpickled one does.
     """
     inner = parse(f"tr({XONLY_A})")
+    with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside wsh"):
+        WshDescriptor(inner)
+    forged = pickle.loads(pickle.dumps(parse(f"wsh(pk({KEY_A}))")))  # noqa: S301
+    object.__setattr__(forged, "inner", inner)
     with pytest.raises(BTClibValueError, match="TrDescriptor is not a script"):
-        WshDescriptor(inner).satisfy({XONLY_A: SCHNORR})
+        forged.satisfy({XONLY_A: SCHNORR})
 
 
 @pytest.mark.parametrize(
