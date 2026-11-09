@@ -65,9 +65,9 @@ excluded-modules = []
 # the workflow uploads, at btclib's run 34833390559, except where a
 # paragraph names its own run.
 #
-# This file triages the non-annotation survivors of `miniscript.py`, not
-# those of descriptors.py and key_expression.py, and they split into
-# these kinds:
+# This file triages the non-annotation survivors of `miniscript.py` and
+# of the script inference in descriptors.py, not the rest of
+# descriptors.py or key_expression.py, and they split into these kinds:
 #
 # - the type-property algebra, which is what this scope was written to
 #   ask about -- and the class is smaller than the survivor list makes it
@@ -126,6 +126,30 @@ excluded-modules = []
 #   want a satisfaction with more satisfiable branches than the quorum
 #   needs, which is where choosing exactly `threshold` of them is what
 #   makes the witness non-malleable.
+# - the script inference in descriptors.py, Core's `Solver`,
+#   `MatchMultisig` and `MatchMultiA` beside it, read off the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41).
+#   tests/descriptors/infer_match_test.py kills the survivors that change
+#   an answer. These operators are equivalent:
+#   - `_sec_size`'s `return -1` for an empty key turned into `return 1`:
+#     every caller compares the size with the key's length, which is 0,
+#     and neither -1 nor 1 is.
+#   - `_multi_a`'s first `script[0] != _X_ONLY_SIZE` weakened to `<`: its
+#     loop reads `script[0]` again and refuses anything but 32, and where
+#     the loop does not run no key is read, and the answer is None too.
+#   - `_multi_a`'s `script[position] != _X_ONLY_SIZE` turned into
+#     `is not`: a byte of a script is an int from 0 to 255, and CPython
+#     and PyPy both answer `is` as `==` on those.
+#   - `_solved`'s `first == b"\x00"` weakened to `<=`: `first` is one byte
+#     there, the script being at least four, and no other byte sorts at
+#     or below it.
+#   - `_inferred`'s `data[0]` turned into `data[-1]` for a "pubkey", whose
+#     data is the one key.
+#   - `_inferred`'s `kind == "witness_v0_keyhash"` weakened to `>=`: the
+#     kinds `_solved` answers that sort after it are
+#     "witness_v0_scripthash" and "witness_v1_taproot", whose 32-byte
+#     programs are never a key of `by_hash`, which holds 20-byte hashes.
 
 # one mutant at a time, in this working tree: see btclib's sig_hash.toml
 [cosmic-ray.distributor]
