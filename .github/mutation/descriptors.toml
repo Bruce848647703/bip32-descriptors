@@ -66,9 +66,9 @@ excluded-modules = []
 # paragraph names its own run.
 #
 # This file triages the non-annotation survivors of `miniscript.py`, and
-# of the script inference, the defaults and the wallet-policy placeholder
-# refusal in descriptors.py, not the rest of descriptors.py or
-# key_expression.py, and they split into these kinds:
+# of the script inference, the defaults, the wallet-policy placeholder
+# refusal and the `@override` marks in descriptors.py, not the rest of
+# descriptors.py or key_expression.py, and they split into these kinds:
 #
 # - the type-property algebra, which is what this scope was written to
 #   ask about -- and the class is smaller than the survivor list makes it
@@ -219,6 +219,15 @@ excluded-modules = []
 #     other bytes, sorting after it. That is the round trip `reads_back`
 #     checks, not shown here for every script: the mutant lives only
 #     while the decoder has no such defect.
+# - the removal of an `@override` mark, which the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41) let live wherever it sampled
+#   one. Any such removal is equivalent: the decorator only sets the
+#   method's `__override__`, which nothing in the tree reads, and the
+#   method still overrides a method of a base class, `object` and `list`
+#   included. The lint gate tells instead: mypy's `explicit-override`,
+#   which pyproject.toml enables, refuses the removal of every mark in
+#   this scope.
 
 # one mutant at a time, in this working tree: see btclib's sig_hash.toml
 [cosmic-ray.distributor]
