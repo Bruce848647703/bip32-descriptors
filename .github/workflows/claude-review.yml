@@ -85,13 +85,13 @@ jobs:
         reads as, or makes an output differ from the vendored vectors
         under tests/**/_data/ is a finding until its test says otherwise.
         So is an import of anything other than the standard library,
-        btclib, ecc and typing_extensions: REVIEWING.md's "This
-        repository in particular" has the rest. A rule that is stated
-        without the reason that chose it, a claim no command re-derives, a
-        count of anything, a second wording of a fact stated elsewhere, and
-        a rule whose own repository does not keep it are the defects the
-        organization's standard names, and they are what to look for
-        beside anything specific to this package.
+        btclib, ecc, base58_bech32 and typing_extensions: REVIEWING.md's
+        "This repository in particular" has the rest. A rule that is
+        stated without the reason that chose it, a claim no command
+        re-derives, a count of anything, a second wording of a fact stated
+        elsewhere, and a rule whose own repository does not keep it are
+        the defects the organization's standard names, and they are what
+        to look for beside anything specific to this package.
       # no extra-allowed-tools: the callee's own base set is what a review
       # of this package reaches for
     # named rather than `inherit`: the callee declares one secret, and
