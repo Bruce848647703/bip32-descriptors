@@ -68,9 +68,9 @@ The grammar read is BIP380 to BIP390:
   descriptor functions they were before miniscript, and what is left is a
   miniscript -- of the P2WSH dialect inside ``wsh()`` and of the tapscript
   one inside ``tr()``, which is where ``multi_a()`` replaces ``multi()``.
-  Inside ``wsh()``, a miniscript BIP379 writes as one of those functions,
-  such as ``c:pk_k()`` written ``pk()``, is read as that function, so
-  that its text parses back
+  A miniscript BIP379 writes as a function read before miniscript, such
+  as ``c:pk_k()`` written ``pk()``, is read as that function, inside
+  ``wsh()`` and inside ``tr()`` alike, so that its text parses back
 
 `satisfy` takes a `SpendContext` beside the signatures for the one
 fragment that reads more than they carry: a miniscript satisfaction
@@ -435,6 +435,10 @@ _TREE_FUNCTIONS = ("multi_a", "sortedmulti_a")
 # two above do
 _RAW_TREE_FUNCTIONS = ("rawnode", "rawleaf")
 
+# the names `_parse_leaf` reads as a function before it tries a miniscript,
+# beside the SCRIPT functions it refuses inside tr()
+_LEAF_FUNCTIONS = ("pk", "raw", "musig", *_TREE_FUNCTIONS, *_RAW_TREE_FUNCTIONS)
+
 # the bytes of a tree node's hash and of the hash160 a p2pkh script holds
 _NODE_HASH_SIZE = 32
 _KEY_HASH_SIZE = 20
@@ -785,10 +789,11 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript leaf is then refused where `parse` would refuse it
-    without `prv_keys`, since the descriptor would not parse back from its
-    text. The leaves are checked once the walk is done, so that a node
-    of the wrong type or context is named before a leaf found not sane.
+    A miniscript leaf is then refused where `parse` reads its text as a
+    function, such as ``pk()`` or ``multi_a()``, or would refuse it
+    without `prv_keys`: either way the descriptor would not parse back
+    from its text. The leaves are checked once the walk is done, so that
+    a node of the wrong type or context is named first.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -812,8 +817,12 @@ def _assert_tree(tree: DescriptorTree) -> None:
         if depth == MAX_TREE_DEPTH:
             raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
         stack += [(node[1], depth + 1, False), (node[0], depth + 1, False)]
-    if not _SANE_BY_PARSE.get():
-        for leaf in leaves:
+    for leaf in leaves:
+        name = _leaf_function(str(leaf))
+        if name is not None:
+            err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
+            raise BTClibValueError(err_msg)
+        if not _SANE_BY_PARSE.get():
             _assert_sane_script(leaf)
 
 
@@ -2763,6 +2772,21 @@ def _function_read(text: str) -> str | None:
     return name if text.endswith(")") and name in _PARSERS else None
 
 
+def _leaf_function(text: str) -> str | None:
+    """Return the function `_parse_leaf` reads a tr() leaf as, else None.
+
+    None is a miniscript. Core's ``Func`` takes a name only where the text
+    ends in ")". ``pkh()`` and ``rawpkh()``, which `_PARSERS` allows
+    inside tr(), are read there as the miniscript fragments, BIP379's and
+    this package's beside it.
+    """
+    if not text.endswith(")"):
+        return None
+    name = text.partition("(")[0]
+    refused = name in _PARSERS and _P2TR not in _PARSERS[name][0]
+    return name if name in _LEAF_FUNCTIONS or refused else None
+
+
 def _one_argument(arguments: list[str], name: str) -> str:
     if len(arguments) != 1:
         err_msg = f"{name}() takes one argument, {len(arguments)} given"
@@ -2861,12 +2885,17 @@ def _parse_leaf(
 ) -> DescriptorLeaf | RawNode:
     """Return a tr() leaf or ``rawnode()``: what ``Expr`` cut, read whole.
 
-    Core's ``Func`` takes a name only where the text ends in ")", so a
-    leaf that does not is read as a miniscript, whatever its name.
+    A leaf `_leaf_function` names no function of is a BIP379 miniscript,
+    which is the same order the wsh() half reads its two grammars in. A
+    ``c:pk_k()``, which BIP379 writes ``pk()``, is returned as the key of
+    that ``pk()`` leaf, which its text parses back to.
     """
-    if not expression.endswith(")"):
-        return _parse_leaf_miniscript(expression, prv_keys)
-    name = expression.partition("(")[0]
+    name = _leaf_function(expression)
+    if name is None:
+        leaf = _parse_leaf_miniscript(expression, prv_keys)
+        if leaf.fragment == "c:" and leaf.subs[0].fragment == "pk_k":
+            return leaf.subs[0].keys[0]
+        return leaf
     if name in _TREE_FUNCTIONS:
         return _parse_multi_a(name, _split_function(expression)[1], prv_keys)
     return _parse_other_leaf(expression, name, prv_keys)
@@ -2875,7 +2904,11 @@ def _parse_leaf(
 def _parse_other_leaf(
     expression: str, name: str, prv_keys: MutableMapping[str, str]
 ) -> DescriptorLeaf | RawNode:
-    """Return the tree of a ``pk()``, a raw function or a miniscript leaf."""
+    """Return the tree of a ``pk()`` or a raw function leaf, refusing the rest.
+
+    The rest is ``musig()`` and the SCRIPT functions `_PARSERS` does not
+    allow inside tr().
+    """
     if name == "musig":
         # allowed inside tr(), and as a key rather than as a leaf: a leaf
         # is a script, and what a musig() aggregates to is one key of one
@@ -2884,17 +2917,10 @@ def _parse_other_leaf(
     if name in _PARSERS and _P2TR not in _PARSERS[name][0]:
         # a SCRIPT function where a leaf is expected: a position rule and
         # not something a later release adds, which is what the position
-        # table says and Bitcoin Core's own message says too. ``pk()``,
-        # ``pkh()``, ``raw()`` and ``rawpkh()`` allow tr() among their
-        # positions and fall through to be read, ``pkh()`` as BIP379's
-        # fragment and ``rawpkh()`` as this package's fragment beside it
+        # table says and Bitcoin Core's own message says too
         _assert_position(name, _P2TR, _PARSERS[name][0])
     if name == "raw" or name in _RAW_TREE_FUNCTIONS:
         return _read_split(_split_function(expression)[1], _RAW_TREE_PARSERS[name])
-    if name != "pk":
-        # a leaf that is no BIP386 leaf is a BIP379 miniscript, which is
-        # the same order the wsh() half reads its two grammars in
-        return _parse_leaf_miniscript(expression, prv_keys)
     key = _split_function(expression)[1]
     return _parse_key(
         key,

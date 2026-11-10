@@ -305,6 +305,81 @@ def test_a_tr_leaf_holding_a_tree_node_as_a_subexpression_is_refused(
     assert_secret_free(e.value, [str(forged)])
 
 
+# tapscript miniscripts whose text `parse` reads as a leaf of another type
+_READ_AS_LEAF = [
+    (f"pk({_X2})", KeyExpression),
+    (f"c:pk_k({_X2})", KeyExpression),
+    (f"multi_a(1,{_X},{_X2})", MultiA),
+]
+
+
+@pytest.mark.parametrize(
+    "expression,cls", _READ_AS_LEAF, ids=[e.partition("(")[0] for e, _ in _READ_AS_LEAF]
+)
+def test_a_tr_miniscript_leaf_parse_reads_as_a_function_is_refused_when_built(
+    expression: str, cls: type
+) -> None:
+    """Built directly, in a branch or by `replace`, naming the function.
+
+    Inside ``tr()`` its text parses back as that leaf, and so does the
+    expression. Issue btclib-org/bip32-descriptors#194.
+    """
+    leaf = miniscript.parse(expression, miniscript.TAPSCRIPT)
+    read = cast("TrDescriptor", parse(f"tr({_X},{leaf})"))
+    assert type(read.tree) is cls
+    assert parse(f"tr({_X},{expression})") == read
+    name = re.escape(str(leaf).partition("(")[0])
+    err_msg = rf"^parse reads {name}\(\) as a descriptor function, not a miniscript$"
+    for tree in (leaf, (_KEY2, leaf), (leaf, _KEY2)):
+        with pytest.raises(BTClibValueError, match=err_msg):
+            TrDescriptor(_KEY, tree)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(TrDescriptor(_KEY), tree=leaf)
+
+
+@pytest.mark.parametrize(
+    "expression", [f"pkh({_X2})", f"c:pk_h({_X2})", f"rawpkh({'00' * 20})"]
+)
+def test_a_tr_miniscript_leaf_parse_reads_as_a_miniscript_is_built(
+    expression: str,
+) -> None:
+    """The control: inside ``tr()`` these are miniscript fragments."""
+    leaf = miniscript.parse(expression, miniscript.TAPSCRIPT)
+    descriptor = TrDescriptor(_KEY, leaf)
+    assert parse(str(descriptor)) == descriptor
+
+
+@pytest.mark.parametrize(
+    "template",
+    [f"tr({_X},LEAF)", f"tr({_X},{{pk({_X}),LEAF}})"],
+    ids=["leaf", "branch"],
+)
+def test_parse_reads_a_tr_leaf_written_as_pk_as_a_pk_leaf(template: str) -> None:
+    """``c:pk_k()``, which its text parses back to, as no miniscript would."""
+    parsed = parse(template.replace("LEAF", f"c:pk_k({_X2})"))
+    assert parsed == parse(template.replace("LEAF", f"pk({_X2})"))
+    assert parse(str(parsed)) == parsed
+
+
+@pytest.mark.parametrize(
+    "wif,network",
+    [
+        (b58.wif_from_prv_key(2, "mainnet", compressed=True), "regtest"),
+        (b58.wif_from_prv_key(2, "testnet", compressed=True), "mainnet"),
+    ],
+    ids=["mainnet-wif-on-regtest", "testnet-wif-on-mainnet"],
+)
+def test_a_tr_leaf_read_as_pk_keeps_its_wif_network_check(
+    wif: str, network: str
+) -> None:
+    """A WIF of another network is refused, as inside ``pk()``."""
+    err_msg = rf"^key 1: not a {network} key: WIF prefix$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},pk({wif}))", network)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},c:pk_k({wif}))", network)
+
+
 class _Network(str):
     """A network name whose methods record whether `parse` was building."""
 
