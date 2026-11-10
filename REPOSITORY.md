@@ -6,7 +6,7 @@ carrying it, so that a session fixing a bug in the package does not hold it
 in context.
 
 The branch rules and the repository settings live *outside* the
-repository. What is recorded is the settings the organization standard
+repository. What is recorded is the settings the organization's standard
 asks about — the ones section 16's checklist sets on a new repository,
 the ones a section of the standard states a rule for, and the ones a
 behaviour it describes rests on — together with whatever a call quoted
@@ -231,7 +231,7 @@ refused, and a merge needs an approval from somebody other than its
 author. It has no bypass actor either: the standard asks that of a tree
 whose `README.md` carries the OpenSSF Best Practices badge, and this one
 is to once the project is registered (section 11 of
-[btclib-org/.github's `README.md`](https://github.com/btclib-org/.github#branch-protection-and-rulesets)).
+[the organization's standard](https://github.com/btclib-org/.github#branch-protection-and-rulesets)).
 btclib-org/.github's
 [`GOVERNANCE.md`](https://github.com/btclib-org/.github/blob/main/GOVERNANCE.md#how-a-decision-is-made),
 *How a decision is made*, says when a bypass is added back; the

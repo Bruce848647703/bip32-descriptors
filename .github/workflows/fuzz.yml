@@ -6,7 +6,7 @@ name: fuzz
 # (fuzz/fuzz_descriptor.py, and through it a key expression's own
 # BIP32KeyData.b58decode and a script's own miniscript.parse), and
 # `BIP32KeyData.parse`, `BIP32KeyData.b58decode` and `BIP32KeyOrigin.parse`
-# (fuzz/fuzz_bip32.py). Section 10 of the organization standard is where
+# (fuzz/fuzz_bip32.py). Section 10 of the organization's standard is where
 # `fuzz` is named as a sentinel every tree parsing a stranger's own input
 # owes.
 #
