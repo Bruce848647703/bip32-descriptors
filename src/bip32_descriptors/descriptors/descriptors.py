@@ -417,6 +417,10 @@ _MINISCRIPT_CONTEXTS = {_P2WSH: miniscript.P2WSH, _P2TR: miniscript.TAPSCRIPT}
 # 1000 elements BIP342 allows is one nobody can spend
 _MAX_MULTI_A_KEYS = 999
 
+# `parse`'s refusal of a multisig function with no key, formatted with its
+# name
+_MULTI_NO_KEYS = "{name}() takes a threshold and at least one key"
+
 # the keys a multi() or sortedmulti() may hold as a bare output script:
 # Bitcoin Core's IsStandard refuses a bare multisig of more, and its
 # descriptor parser refuses a top-level multi() of more
@@ -1169,6 +1173,13 @@ class Descriptor(ABC):
     Keyword-only so that the fragments below can add positional fields of
     their own: a dataclass field with a default followed by one without
     is a TypeError, and `network` has a default.
+
+    Once fragments nest, a fragment built by hand does not always refuse
+    the fault `parse` names first. An argument invalid by itself is
+    refused by its own build, before the ``sh()`` or ``wsh()`` that wraps
+    it can name its function or a key, which `parse` names first:
+    ``wsh(wpkh(KEY))`` with an uncompressed key is refused for the key
+    when built, and by `parse` for ``wpkh()`` inside ``wsh()``.
     """
 
     network: str = "mainnet"
@@ -1631,7 +1642,10 @@ class PkhDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class WpkhDescriptor(Descriptor):
-    """``wpkh(KEY)``: a p2wpkh output, BIP382."""
+    """``wpkh(KEY)``: a p2wpkh output, BIP382.
+
+    An uncompressed key is refused when built, with `parse`'s message.
+    """
 
     key: KeyExpression
 
@@ -1640,6 +1654,7 @@ class WpkhDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
         _assert_keys_outside_taproot((self.key,))
+        _assert_keys((self.key,), _assert_compressed)
 
     @override
     def __str__(self) -> str:
@@ -1692,7 +1707,8 @@ class ShDescriptor(Descriptor):
 
     An argument `parse` refuses inside ``sh()`` by its function, by the
     size of its script or by the number of keys of a ``multi()`` is
-    refused when built, with `parse`'s message.
+    refused when built, with `parse`'s message, unless the argument is
+    invalid by itself, as `Descriptor` says.
     """
 
     inner: Descriptor
@@ -1763,7 +1779,8 @@ class WshDescriptor(Descriptor):
 
     An argument `parse` refuses inside ``wsh()`` by its function, by an
     uncompressed key, by the size of its script or by the number of keys
-    of a ``multi()`` is refused when built, with `parse`'s message.
+    of a ``multi()`` is refused when built, with `parse`'s message, unless
+    the argument is invalid by itself, as `Descriptor` says.
     """
 
     inner: Descriptor
@@ -1929,7 +1946,13 @@ class MiniscriptDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class MultiDescriptor(Descriptor):
-    """``multi(k,KEY,...)`` and ``sortedmulti(k,KEY,...)``, BIP383."""
+    """``multi(k,KEY,...)`` and ``sortedmulti(k,KEY,...)``, BIP383.
+
+    A threshold Bitcoin Core cannot read, no keys, more keys than
+    OP_CHECKMULTISIG takes, and a k outside 1 to n are refused when built,
+    in `parse`'s order and with its messages. A negative threshold, which
+    no text holds, is refused as one over 2**32-1 is.
+    """
 
     threshold: int
     keys: tuple[KeyExpression, ...]
@@ -1948,7 +1971,14 @@ class MultiDescriptor(Descriptor):
         for key in self.keys:
             assert_type(key, KeyExpression, "key")
         assert_type(self.sort, bool, "sort")
+        name = "sortedmulti" if self.sort else "multi"
+        _assert_uint32_threshold(name, self.threshold)
+        if not self.keys:
+            raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
         _assert_keys_outside_taproot(self.keys)
+        _assert_multi_count(name, self.keys)
+        if not 1 <= self.threshold <= len(self.keys):
+            raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
 
     @override
     def __str__(self) -> str:
@@ -2217,6 +2247,9 @@ class RawPkhDescriptor(Descriptor):
     Inside a miniscript the same text is the fragment ``pkh(KEY)`` is, with
     the hash for the key. Inside ``tr()`` it is a c0 leaf, and the hash is
     that of the 32-byte x-only key, as it is in the ``pkh()`` leaf.
+
+    An empty hash and one of other than 20 bytes are refused when built,
+    with `parse`'s message.
     """
 
     key_hash: bytes
@@ -2225,6 +2258,7 @@ class RawPkhDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key_hash, bytes, "key hash")
+        _assert_key_hash_size(self.key_hash)
 
     @override
     def __str__(self) -> str:
@@ -2238,8 +2272,8 @@ class RawPkhDescriptor(Descriptor):
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
-        if len(self.key_hash) != _KEY_HASH_SIZE:
-            raise BTClibValueError("160 bits digest expected")
+        # refused again: unpickling builds one without `__post_init__`
+        _assert_key_hash_size(self.key_hash)
         return [
             serialize(
                 ["OP_DUP", "OP_HASH160", self.key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
@@ -2805,7 +2839,7 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
     args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
-        raise BTClibValueError(f"{name}() takes a threshold and at least one key")
+        raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
     keys, lengths = _read_multipath_keys(
         args[1:],
         lambda key: _parse_key(
@@ -3095,7 +3129,7 @@ def _parse_multi(
     args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
-        raise BTClibValueError(f"{name}() takes a threshold and at least one key")
+        raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
     keys, lengths = _read_multipath_keys(
         args[1:],
         lambda key: _parse_key(
@@ -3127,9 +3161,14 @@ def _read_multi_threshold(name: str, text: str) -> int:
     if not _THRESHOLD.fullmatch(text):
         raise BTClibValueError(f"invalid {name}() threshold: digits expected")
     threshold = _int_from_digits(text, f"{name}() threshold")
-    if threshold > 0xFFFFFFFF:
-        raise BTClibValueError(f"invalid {name}() threshold: not in 0..2**32-1")
+    _assert_uint32_threshold(name, threshold)
     return threshold
+
+
+def _assert_uint32_threshold(name: str, threshold: int) -> None:
+    """Refuse a threshold Bitcoin Core cannot read, without quoting it."""
+    if not 0 <= threshold <= 0xFFFFFFFF:
+        raise BTClibValueError(f"invalid {name}() threshold: not in 0..2**32-1")
 
 
 def _assert_multi_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
@@ -3296,10 +3335,23 @@ def _assert_raw_size(script: bytes, context: str) -> None:
 def _parse_rawpkh(
     args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
-    key_hash = _hex_bytes(_one_argument(args, "rawpkh"), "Rawpkh hash is not hex")
+    key_hash = _hex_bytes(_one_argument(args, "rawpkh"), _RAWPKH_NOT_HEX)
+    return RawPkhDescriptor(key_hash, network=network)
+
+
+_RAWPKH_NOT_HEX = "Rawpkh hash is not hex"
+
+
+def _assert_key_hash_size(key_hash: bytes) -> None:
+    """Refuse a hash `parse` refuses, with its message.
+
+    An empty one as `_hex_bytes` refuses empty hex, then a size other
+    than 20 bytes.
+    """
+    if not key_hash:
+        raise BTClibValueError(_RAWPKH_NOT_HEX)
     if len(key_hash) != _KEY_HASH_SIZE:
         raise BTClibValueError("160 bits digest expected")
-    return RawPkhDescriptor(key_hash, network=network)
 
 
 def _parse_bare_leaf(args: list[str]) -> RawLeaf:
