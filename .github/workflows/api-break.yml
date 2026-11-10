@@ -46,6 +46,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # the label; read-only on a fork
-    uses: btclib-org/.github/.github/workflows/reusable-api-break.yml@f1e5044d9c9d0ce9d1c5cdc74f483b3d08a2bd8f # v2026.11.9
+    uses: btclib-org/.github/.github/workflows/reusable-api-break.yml@5be973d6a2969cfc572be91df4637d71d7c56a11 # v2026.11.11
     with:
       package: bip32_descriptors

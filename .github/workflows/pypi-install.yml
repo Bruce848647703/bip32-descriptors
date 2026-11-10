@@ -56,7 +56,7 @@ jobs:
   # the organization's standard)
   wait-for-index:
     if: ${{ !github.event.pull_request.draft }}
-    uses: btclib-org/.github/.github/workflows/reusable-wait-for-index.yml@f1e5044d9c9d0ce9d1c5cdc74f483b3d08a2bd8f # v2026.11.9
+    uses: btclib-org/.github/.github/workflows/reusable-wait-for-index.yml@5be973d6a2969cfc572be91df4637d71d7c56a11 # v2026.11.11
     with:
       package: bip32-descriptors
       version: ${{ inputs.version }}
