@@ -139,14 +139,23 @@ excluded-modules = []
 #   alphabetical extreme of the closed set it comes from, which is the
 #   class btclib's bms.toml states, and worth a look one by one rather than in
 #   bulk.
-# - `satisfy`'s `index: int = 0` default, `_thresh_input`'s `count ==
-#   node.threshold` and `_thresh_ops`' and `_thresh_witness`'
-#   `reached[1]`/`reached[-1]`: an undefended default and three indexes
-#   into what a `thresh` walk builds. The default wants a ranged key --
-#   with plain keys the index changes nothing -- and the `thresh` three
-#   want a satisfaction with more satisfiable branches than the quorum
-#   needs, which is where choosing exactly `threshold` of them is what
-#   makes the witness non-malleable.
+# - `_thresh_input`'s `count == node.threshold` and `_thresh_ops`' and
+#   `_thresh_witness`' `reached[1]`/`reached[-1]`: what a `thresh` walk
+#   builds. They want a satisfaction with more satisfiable branches than
+#   the quorum needs, which is where choosing exactly `threshold` of them
+#   is what makes the witness non-malleable.
+# - the satisfier's choices, read off the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41). `satisfy`'s `index: int = 0`
+#   default, which wants a ranged key, `_element`'s length prefix and
+#   `_better`'s size comparison die in
+#   tests/descriptors/satisfier_choice_test.py. These operators are
+#   equivalent:
+#   - `_better`'s `first.malleable != second.malleable` turned into
+#     `is not`: every `malleable` is a bool, and `True` and `False` are
+#     the only two.
+#   - `_or_input`'s `fragment == "or_b"` weakened to `<=`: it is reached
+#     for "or_b", "or_c", "or_d" and "or_i" only, and "or_b" sorts first.
 # - the script inference in descriptors.py, Core's `Solver`,
 #   `MatchMultisig` and `MatchMultiA` beside it, read off the mutation run
 #   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
