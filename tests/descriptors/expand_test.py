@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from btclib.exceptions import BTClibValueError
 from btclib.network import NETWORKS
-from ecc.ecc.musig2 import key_agg_var
+from ecc.musig2 import key_agg_var
 
 from bip32_descriptors.bip32 import derive, xpub_from_xprv
 from bip32_descriptors.bip32.bip32 import derive_, rootxprv_from_seed

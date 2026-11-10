@@ -335,7 +335,9 @@ def test_each_unit_imports_only_the_units_below_it() -> None:
 
 
 # the distributions `dependencies` names, by their import names
-_DECLARED = frozenset({"btclib", "ecc", "typing_extensions", "bip32_descriptors"})
+_DECLARED = frozenset(
+    {"base58_bech32", "btclib", "ecc", "typing_extensions", "bip32_descriptors"}
+)
 
 
 def _top_level_imports(source: str) -> set[str]:

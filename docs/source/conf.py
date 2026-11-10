@@ -116,14 +116,14 @@ intersphinx_cache_limit = 0
 # and source above:
 # curl -fsSL -o docs/source/_inventories/python.inv https://docs.python.org/3/objects.inv
 # `_inventories/ecc.inv` is the same for ecc: a copy of the inventory that
-# https://btclib-ecc.readthedocs.io/en/v2026.11.6/objects.inv served on
-# 2026-11-08, read only when that site fails. To refresh it, run this from
+# https://btclib-ecc.readthedocs.io/en/v2026.11.8/objects.inv served on
+# 2026-11-10, read only when that site fails. To refresh it, run this from
 # the repository root, with the version uv.lock pins, and rewrite the
 # version and date:
 # curl -fsSL -o docs/source/_inventories/ecc.inv https://btclib-ecc.readthedocs.io/en/v<version>/objects.inv
 # `_inventories/btclib.inv` is the same for btclib: a copy of the inventory
-# that https://btclib.readthedocs.io/en/v2026.11.2/objects.inv served on
-# 2026-11-08, refreshed the same way:
+# that https://btclib.readthedocs.io/en/v2026.11.10/objects.inv served on
+# 2026-11-10, refreshed the same way:
 # curl -fsSL -o docs/source/_inventories/btclib.inv https://btclib.readthedocs.io/en/v<version>/objects.inv
 
 # what the mapping above does not answer for, one shape no inventory can

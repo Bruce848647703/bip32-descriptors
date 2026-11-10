@@ -1,7 +1,8 @@
 # Architecture
 
 The package is two subpackages, layered bottom-up, on top of
-[btclib](https://github.com/btclib-org/btclib) and
+[btclib](https://github.com/btclib-org/btclib),
+[base58-bech32](https://github.com/btclib-org/base58-bech32) and
 [ecc](https://github.com/btclib-org/ecc).
 
 `bip32` is the base and imports nothing else of the package. Within it,

@@ -21,7 +21,7 @@ from btclib.script import sig_hash
 from btclib.script.engine import verify_transaction
 from btclib.script.witness import Witness
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
-from ecc.ecc import ssa
+from ecc import ssa
 
 from bip32_descriptors.descriptors import add_checksum, parse, private_string
 from bip32_descriptors.descriptors.miniscript import TAPSCRIPT

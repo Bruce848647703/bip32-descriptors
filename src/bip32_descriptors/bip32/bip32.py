@@ -30,7 +30,8 @@ import string
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from btclib import base58
+from base58_bech32.base58 import b58decode_check, b58encode_check
+from base58_bech32.exceptions import Base58Bech32ValueError
 from btclib.alias import BinaryData, Octets, Point, String
 from btclib.exceptions import BTClibTypeError, BTClibValueError, InvalidPrvKeyError
 from btclib.hashes import hash160
@@ -53,6 +54,7 @@ from btclib.utils import (
     int_from_json_number,
     is_integer,
 )
+from ecc.alias import Public
 from ecc.curves import (
     Curve,
     PubKeyTweakChain,
@@ -107,7 +109,7 @@ _REQUIRED_LENGTH = 78
 
 @functools.lru_cache(maxsize=2048)
 def _cached_base58_decode(address: String) -> bytes:
-    """Return `base58.decode(address)`, memoized on the xprv/xpub string.
+    """Return `b58decode_check(address)`, memoized on the xprv/xpub string.
 
     `derive` decodes its `xkey` argument fresh on every call, and a
     caller deriving many indices or paths from one account key -- what
@@ -140,17 +142,14 @@ def _cached_base58_decode(address: String) -> bytes:
     `b58decode` still has to construct a fresh one on every call. Bytes
     are the one result here nobody can mutate by accident.
 
-    Every refusal is raised outside the `except`. A bad checksum is cut
-    to `invalid checksum`: at the btclib floor `pyproject.toml` names,
-    `base58.decode` quotes the right checksum, a hash of the key.
+    The codec refuses with `Base58Bech32ValueError`, which is no
+    `BTClibValueError`, so its refusal leaves as one, raised outside the
+    `except`.
     """
     try:
-        return base58.decode(address)
-    except BTClibValueError as e:
-        # the other messages of `base58.decode` quote nothing of the key
-        refusal = str(e).split(": ", maxsplit=1)[0]
-        if not refusal.startswith("invalid checksum"):
-            refusal = str(e)
+        return b58decode_check(address)
+    except Base58Bech32ValueError as e:
+        refusal = str(e)
     raise BTClibValueError(refusal)
 
 
@@ -205,7 +204,7 @@ def _assert_valid_key(version: bytes, key: bytes) -> None:
         # chain, so the message below states the error on its own, independent
         # of curve_group's own "invalid x-coordinate" wording
         x = int.from_bytes(key[1:], byteorder="big", signed=False)
-        if not is_x_coordinate_var(x, secp256k1):
+        if not is_x_coordinate_var(Public(x), secp256k1):
             # the value may be a private scalar: only its prefix is quoted
             err_msg = f"invalid public key: not a point, prefix 0x{key[:1].hex()}"
             raise BTClibValueError(err_msg)
@@ -364,7 +363,7 @@ class BIP32KeyData:
     def b58encode(self, *, check_validity: bool = True) -> str:
         """Return the Base58Check text, the xprv/xpub spelling."""
         data_binary = self.serialize(check_validity=check_validity)
-        return base58.encode(data_binary).decode("ascii")
+        return b58encode_check(data_binary).decode("ascii")
 
     @classmethod
     def parse(
@@ -402,7 +401,7 @@ class BIP32KeyData:
     ) -> BIP32KeyData:
         """Build a BIP32KeyData from its xprv/xpub Base58Check text.
 
-        The type is asked here rather than left to `base58.decode`, which
+        The type is asked here rather than left to `b58decode_check`, which
         does ask it: the cache in front of that call keys on the argument,
         so anything unhashable -- a list, or a mutable buffer -- would
         leave a complaint about hashing instead of the refusal decoding
@@ -848,8 +847,8 @@ def _pub_key_offset(chain_code: bytes, key: bytes, index: int) -> tuple[bytes, b
     aggregate keys of BIP328, which have no private key to derive with.
 
     The 32 octets of the hmac's left half, not the integer they spell:
-    what `pub_key_derivation_tweaks` answers is octets, and
-    `PubKeyTweakChain.tweak_add_var` takes them as they are.
+    what `pub_key_derivation_tweaks` answers is octets.
+    `PubKeyTweakChain.tweak_add_var` takes the integer, as a `Public`.
     """
     xb = key + index.to_bytes(4, byteorder="big", signed=False)
     hmac_ = hmac.new(chain_code, xb, "sha512").digest()
@@ -915,7 +914,7 @@ def pub_key_derivation_tweaks(
     for index in indexes:
         offset, code = _pub_key_offset(code, key, index)
         tweaks.append(offset)
-        key = chain.tweak_add_var(offset)
+        key = chain.tweak_add_var(Public(int.from_bytes(offset, "big")))
     return tweaks
 
 
@@ -931,7 +930,7 @@ def __pub_key_derivation(
     # held across every index of the path, so that only the first of them
     # pays for parsing xkey.key
     try:
-        sec = chain.tweak_add_var(offset)
+        sec = chain.tweak_add_var(Public(int.from_bytes(offset, "big")))
     except ValueError as e:
         # past the range check above, the one sum the chain refuses is
         # the point at infinity BIP32 refuses too

@@ -263,19 +263,14 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 # - `parse`'s `len(key_bin) != _REQUIRED_LENGTH` weakened to `>`, in
 #   tests/fuzz_test.py.
 #
-# `_cached_base58_decode`'s cut of a quoted checksum, `maxsplit=1` turned
-# into 0, `[0]` into `[-1]` and its `not` dropped or doubled, and
-# `is_root`'s `parent_fingerprint == b"\x00" * 4` weakened to `<=` die in
-# tests/bip32/bip32_test.py. The lock's btclib quotes no checksum, so the
-# test hands `b58decode` the message the floor's does. These operators
-# are equivalent, where the paragraphs above have not named them:
+# `is_root`'s `parent_fingerprint == b"\x00" * 4` weakened to `<=` dies
+# in tests/bip32/bip32_test.py. These operators are equivalent, where the
+# paragraphs above have not named them:
 #
 # - `@functools.lru_cache(maxsize=2048)` on `_cached_base58_decode`
 #   removed, or its size moved by one: the function returns the bytes
-#   `base58.decode` does, a refusal is raised and never cached, and
+#   `b58decode_check` does, a refusal is raised and never cached, and
 #   nothing reads the cache, so what changes is how often it decodes.
-# - `maxsplit=1` turned into 2: the part before the first ": " is the
-#   same.
 # - `_assert_valid_depth_and_index`'s `depth == 0` weakened to `<= 0`: a
 #   negative depth is refused by the check before it.
 # - `_assert_valid_key`'s `key[0] != 0` weakened to `> 0`: a byte is

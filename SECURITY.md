@@ -26,7 +26,9 @@ fix.
 ## What belongs here, and what belongs upstream
 
 This package is built on [btclib](https://github.com/btclib-org/btclib),
-which holds the codecs, scripts, addresses and taproot, and on
+which holds the scripts, addresses and taproot, on
+[base58-bech32](https://github.com/btclib-org/base58-bech32), which
+holds the Base58Check and bech32 codecs, and on
 [ecc](https://github.com/btclib-org/ecc), which holds the curve
 arithmetic and the signature schemes. secp256k1 arithmetic is delegated
 further down to

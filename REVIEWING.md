@@ -528,7 +528,7 @@ question names it.
 
 - Does the diff make this package **import a distribution
   `pyproject.toml`'s `dependencies` does not name, or re-export a name of
-  btclib's or ecc's**? `CONTRIBUTING.md`'s *The one constraint* states it,
+  a dependency's**? `CONTRIBUTING.md`'s *The one constraint* states it,
   `tests/imports_test.py` is the gate, and `ARCHITECTURE.md` has the
   layering.
 - Does a change that computes with a secret **do it through btclib or

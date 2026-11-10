@@ -17,9 +17,10 @@ miniscript, in typed Python.
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/16116/baseline)](https://www.bestpractices.dev/projects/16116)
 
 It is fully annotated and ships `py.typed`. It is built on
-[btclib](https://github.com/btclib-org/btclib), the protocol package, and
-[ecc](https://github.com/btclib-org/ecc), the curve package; its
-`secp256k1` extra adds the libsecp256k1 bindings, and without them the
+[btclib](https://github.com/btclib-org/btclib), the protocol package,
+[base58-bech32](https://github.com/btclib-org/base58-bech32), the codec
+package, and [ecc](https://github.com/btclib-org/ecc), the curve package;
+its `secp256k1` extra adds the libsecp256k1 bindings, and without them the
 Python arithmetic answers instead.
 
 ## What is here

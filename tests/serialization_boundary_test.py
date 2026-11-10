@@ -227,7 +227,7 @@ def test_the_text_boundary_refuses_what_is_no_text(
     """The same rule where the encoding is text rather than octets.
 
     `b58decode` left a native exception: it handed the argument to the
-    cache in front of `base58.decode`, which keys on the argument and so
+    cache in front of `b58decode_check`, which keys on the argument and so
     refused an unhashable one for being unhashable.
     """
     for wrong in _WRONG_TYPES:

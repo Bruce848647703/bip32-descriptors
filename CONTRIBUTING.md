@@ -332,12 +332,12 @@ To get an overview of the project, read the [README](./README.md).
 
 ### The one constraint
 
-**This package is built on btclib and ecc, and never the reverse.** It
-imports `btclib`, `ecc` and `typing_extensions`, and re-exports nothing
-of them: a caller wanting one of their names imports it from that
-package. `tests/imports_test.py` reads the import graph, refuses an
-import of an undeclared distribution, and asserts that `btclib` imports
-nothing of this package.
+**This package is built on btclib, base58-bech32 and ecc, and never the
+reverse.** It imports `btclib`, `ecc`, `base58_bech32` and
+`typing_extensions`, and re-exports nothing of them: a caller wanting
+one of their names imports it from that package. `tests/imports_test.py`
+reads the import graph, refuses an import of an undeclared distribution,
+and asserts that `btclib` imports nothing of this package.
 
 ### The public surface
 

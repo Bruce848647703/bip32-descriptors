@@ -418,34 +418,9 @@ def test_a_tr_leaf_read_as_pk_keeps_its_wif_network_check(
 
 
 class _Network(str):
-    """A network name whose methods record whether `parse` was building."""
+    """A caller's str subclass, which `parse` must not hand on."""
 
     __slots__ = ()
-    # each call, with whether `parse` was building a descriptor then
-    calls: list[tuple[str, bool]] = []  # noqa: RUF012
-
-    def _record(self, name: str) -> None:
-        _Network.calls.append((name, descriptors_module._SANE_BY_PARSE.get()))
-
-    @override
-    def strip(self, chars: str | None = None) -> str:
-        self._record("strip")
-        return _Network(str.strip(self, chars))
-
-    @override
-    def lower(self) -> str:
-        self._record("lower")
-        return _Network(str.lower(self))
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        self._record("__eq__")
-        return str.__eq__(self, other)
-
-    @override
-    def __hash__(self) -> int:
-        self._record("__hash__")
-        return str.__hash__(self)
 
 
 @pytest.mark.parametrize(
@@ -453,14 +428,25 @@ class _Network(str):
     [f"wsh(and_v(v:pk({_C}),pk({PrvKeyData(4).pub.sec.hex()})))", f"tr({_X},pk({_X}))"],
     ids=["wsh", "tr"],
 )
-def test_parse_builds_with_no_method_of_a_caller_s_network(text: str) -> None:
-    """`parse` hands the constructors the network table's own string."""
-    _Network.calls.clear()
-    network = _Network(" MAINNET ")
-    descriptor = parse(text, network)
-    # the control: its methods run, as `parse` validates the name
-    assert ("lower", False) in _Network.calls
-    assert all(not building for _, building in _Network.calls)
+def test_parse_hands_constructors_the_table_s_own_network_string(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`parse` hands the constructors the network table's own string.
+
+    It is that object itself, never the caller's str subclass, whatever
+    btclib's normalization returns.
+    """
+    received: list[str] = []
+    parse_text = descriptors_module._parse_text
+
+    def spy(text: str, network: str, prv_keys: Any) -> Any:
+        received.append(network)
+        return parse_text(text, network, prv_keys)
+
+    monkeypatch.setattr(descriptors_module, "_parse_text", spy)
+    descriptor = parse(text, _Network(" MAINNET "))
+    assert len(received) == 1
+    assert received[0] is descriptors_module._NETWORK_NAMES["mainnet"]
     assert type(descriptor.network) is str
     assert descriptor.network == "mainnet"
 

@@ -190,9 +190,9 @@ from btclib.script.taproot import (
 )
 from btclib.script.witness import Witness
 from btclib.utils import assert_type, bytes_from_octets, is_integer
-from ecc.ecc.ssa import point_from_bip340pub_key_var
 from ecc.exceptions import EccValueError
 from ecc.hashes import tagged_hash
+from ecc.ssa import point_from_bip340pub_key_var
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import (
@@ -3665,8 +3665,8 @@ def parse(
     descriptor is then refused.
     """
     assert_type(descriptor, str, "descriptor")
-    # the table's own string, so that building the descriptor runs no
-    # method of a caller's str subclass
+    # the table's own string, so that no constructor is handed a caller's
+    # str subclass, whatever btclib's normalization returns
     network = _NETWORK_NAMES[validated_network_name(network)]
     assert_type(prv_keys, (MutableMapping, type(None)), "prv_keys")
     assert_type(preimages, (MutableMapping, type(None)), "preimages")
