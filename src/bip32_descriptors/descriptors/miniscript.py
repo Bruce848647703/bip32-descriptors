@@ -81,7 +81,7 @@ from dataclasses import dataclass, field, replace
 from typing import SupportsIndex, TypeVar
 
 from btclib.alias import Octets, ScriptList
-from btclib.exceptions import BTClibValueError
+from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160, hash256, ripemd160, sha256
 from btclib.network import network_from_xkeyversion
 from btclib.script.limits import (
@@ -101,7 +101,13 @@ from btclib.tx.limits import (
     SEQUENCE_LOCKTIME_MASK,
     SEQUENCE_LOCKTIME_TYPE_FLAG,
 )
-from btclib.utils import assert_type, bytes_from_octets, decode_num, encode_num
+from btclib.utils import (
+    assert_type,
+    bytes_from_octets,
+    decode_num,
+    encode_num,
+    is_integer,
+)
 from btclib.var_int import serialize as var_int_serialize
 from ecc.exceptions import EccValueError
 from typing_extensions import override
@@ -1170,6 +1176,11 @@ class Miniscript:
 
         A fragment or a context given by hand is any value, so its refusal
         names only the library's own.
+
+        The fragment, the keys, the digest and the number each have their
+        type asserted just before their value is checked, the keys only as
+        a tuple: a field of another type leaves as a `BTClibTypeError`
+        naming the field and the type alone.
         """
         assert_type(self.context, str, "context")
         if self.context not in (P2WSH, TAPSCRIPT):
@@ -1177,6 +1188,7 @@ class Miniscript:
             err_msg += f"; it must be one of {sorted((P2WSH, TAPSCRIPT))}"
             raise BTClibValueError(err_msg)
         fragment = self.fragment
+        assert_type(fragment, str, "fragment")
         if fragment == "thresh":
             if not self.subs:
                 raise BTClibValueError("thresh() takes at least one subexpression")
@@ -1194,6 +1206,7 @@ class Miniscript:
             err_msg = f"a subexpression of {fragment} is not in {self.context}"
             raise BTClibValueError(err_msg)
         self._assert_keys()
+        assert_type(self.data, bytes, "data")
         if len(self.data) != _DATA_SIZE.get(fragment, 0):
             expected = _DATA_SIZE.get(fragment, 0)
             err_msg = (
@@ -1210,6 +1223,7 @@ class Miniscript:
         ``musig()`` key would also want an ECDSA signature, which a MuSig2
         group does not make (BIP327).
         """
+        assert_type(self.keys, tuple, "keys")
         fragment = self.fragment
         keys = len(self.keys)
         if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != (
@@ -1231,7 +1245,10 @@ class Miniscript:
                 _assert_outside_taproot(key)
 
     def _assert_number(self) -> None:
-        """Refuse a lock time or a threshold outside its bounds."""
+        """Refuse a lock time or a threshold not an integer or out of bounds."""
+        if not is_integer(self.threshold):
+            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
+            raise BTClibTypeError(err_msg)
         fragment = self.fragment
         threshold = self.threshold
         if fragment in {"older", "after"}:

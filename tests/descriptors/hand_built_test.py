@@ -5,15 +5,17 @@
 """What `parse` never builds is refused when a descriptor is built by hand.
 
 A field of the wrong type, in every `Descriptor` fragment and in a
-`MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`,
-`MiniscriptDescriptor`, `UnusedDescriptor`, `ShDescriptor`,
-`WshDescriptor` and `MultiA` also refuse a value `parse` refuses, as a
-`BTClibValueError`, and every fragment holding a key that `parse` reads
-outside ``tr()`` and ``rawtr()``, and a P2WSH `Miniscript` node, refuses
-a ``musig()`` one and an x-only one. Issues
-btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
-btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
-btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#150,
+`MultiA`, leaves as a `BTClibTypeError`, and so does a `Miniscript`
+node's fragment, threshold or digest of the wrong type, or its keys
+given as no tuple. `TrDescriptor`, `MiniscriptDescriptor`,
+`UnusedDescriptor`, `ShDescriptor`, `WshDescriptor` and `MultiA` also
+refuse a value `parse` refuses, as a `BTClibValueError`, and every
+fragment holding a key that `parse` reads outside ``tr()`` and
+``rawtr()``, and a P2WSH `Miniscript` node, refuses a ``musig()`` one
+and an x-only one. Issues btclib-org/bip32-descriptors#46,
+btclib-org/bip32-descriptors#85, btclib-org/bip32-descriptors#103,
+btclib-org/bip32-descriptors#119, btclib-org/bip32-descriptors#134,
+btclib-org/bip32-descriptors#141, btclib-org/bip32-descriptors#150,
 btclib-org/bip32-descriptors#158, btclib-org/bip32-descriptors#159 and
 btclib-org/bip32-descriptors#161.
 
@@ -553,6 +555,45 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
     err_msg = f"^invalid k in k-of-n {name}: {threshold}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         MultiA(threshold, keys, sort=sort)
+
+
+# a hand-built `Miniscript` node for each field the tests below try,
+# carrying a valid value of it for `replace` to overtype
+_OLDER = miniscript.Miniscript("older", miniscript.P2WSH, threshold=1)
+_PK_K = miniscript.Miniscript("pk_k", miniscript.TAPSCRIPT, keys=(_KEY,))
+_SHA256 = miniscript.Miniscript("sha256", miniscript.P2WSH, data=bytes(32))
+
+
+@pytest.mark.parametrize("fragment", [[], 5, None])
+def test_a_miniscript_fragment_of_another_type_is_refused(fragment: Any) -> None:
+    """The fragment is the name BIP379 gives it, never another type."""
+    err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_OLDER, fragment=fragment)
+
+
+@pytest.mark.parametrize("threshold", ["1", 1.0, True, None])
+def test_a_miniscript_threshold_of_another_type_is_refused(threshold: Any) -> None:
+    """A bool is no number, though Python makes it an int."""
+    err_msg = f"^invalid threshold type: {type(threshold).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_OLDER, threshold=threshold)
+
+
+@pytest.mark.parametrize("keys", [5, [_KEY], None])
+def test_miniscript_keys_of_another_type_are_refused(keys: Any) -> None:
+    """The keys are a tuple, as `parse` builds them."""
+    err_msg = f"^invalid keys type: {type(keys).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_PK_K, keys=keys)
+
+
+@pytest.mark.parametrize("data", ["ab" * 32, 5, bytearray(32)])
+def test_miniscript_data_of_another_type_is_refused(data: Any) -> None:
+    """Hex text is not the digest: `parse` is what reads hex."""
+    err_msg = f"^invalid data type: {type(data).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_SHA256, data=data)
 
 
 _K = PrvKeyData(1).pub.sec.hex()
