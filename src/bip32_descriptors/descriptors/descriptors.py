@@ -2738,15 +2738,17 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    An uncompressed key, the size of its script, and the number of keys
-    of a ``multi()``, with `parse`'s messages. ``sh()`` and ``wsh()`` hold
-    no key of their own, so a key's index in `inner` is the position
-    `parse` names.
+    An uncompressed key, the number of keys of a ``multi()``, and the
+    size of its script, in `parse`'s order and with its messages.
+    ``sh()`` and ``wsh()`` hold no key of their own, so a key's index in
+    `inner` is the position `parse` names.
     """
     if _no_uncompressed(context):
         _assert_keys(inner.key_expressions, _assert_compressed)
     if isinstance(inner, MultiDescriptor):
-        _assert_multi_size(str(inner).partition("(")[0], inner.keys, context)
+        name = str(inner).partition("(")[0]
+        _assert_multi_count(name, inner.keys)
+        _assert_multi_size(name, inner.keys, context)
     elif isinstance(inner, RawDescriptor):
         _assert_raw_size(inner.script, context)
 
@@ -3079,6 +3081,7 @@ def _parse_multi(
         ),
     )
     _assert_multisig_end(name, text, args)
+    _assert_multi_count(name, keys)
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
     _assert_multi_size(name, keys, context)
@@ -3103,22 +3106,31 @@ def _read_multi_threshold(name: str, text: str) -> int:
     return threshold
 
 
+def _assert_multi_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
+    """Refuse a ``multi()`` of more keys than OP_CHECKMULTISIG takes.
+
+    Bitcoin Core counts the keys before it checks the threshold and the
+    bound of the position, so the count is the fault named wherever the
+    ``multi()`` sits.
+    """
+    if len(keys) > MAX_PUBKEYS_PER_MULTISIG:
+        err_msg = f"{name}() takes at most {MAX_PUBKEYS_PER_MULTISIG} keys"
+        raise BTClibValueError(f"{err_msg}, {len(keys)} given")
+
+
 def _assert_multi_size(
     name: str, keys: tuple[KeyExpression, ...], context: str
 ) -> None:
     """Refuse the keys of a ``multi()`` that Bitcoin Core refuses where it sits.
 
-    OP_CHECKMULTISIG's own bound first, which holds everywhere; then the
-    bare output IsStandard relays, and the redeem script a ``sh()`` has to
-    push in one element, which is what spending it takes. ``wsh()`` adds
-    nothing: twenty keys are a witness script well inside its bound. The
-    size is Core's own sum, a key and its push byte each, plus one byte
-    each for the threshold, the count and OP_CHECKMULTISIG: the script's
-    exact size up to sixteen keys, and over the limit past them anyway.
+    IsStandard relays a bare output of at most three keys, and a ``sh()``
+    has to push its redeem script in one element of at most 520 bytes.
+    ``wsh()`` adds nothing: twenty keys, the most `_assert_multi_count`
+    lets through, are a witness script well inside its bound. The size is
+    Core's own sum, a key and its push byte each, plus one byte each for
+    the threshold, the count and OP_CHECKMULTISIG: the script's exact size
+    up to sixteen keys, and over the limit past them anyway.
     """
-    if len(keys) > MAX_PUBKEYS_PER_MULTISIG:
-        err_msg = f"{name}() takes at most {MAX_PUBKEYS_PER_MULTISIG} keys"
-        raise BTClibValueError(f"{err_msg}, {len(keys)} given")
     if context == _TOP and len(keys) > _MAX_BARE_MULTISIG_KEYS:
         err_msg = f"a bare {name}() takes at most {_MAX_BARE_MULTISIG_KEYS} keys"
         raise BTClibValueError(f"{err_msg}, {len(keys)} given")
