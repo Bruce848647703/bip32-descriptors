@@ -65,9 +65,10 @@ excluded-modules = []
 # the workflow uploads, at btclib's run 34833390559, except where a
 # paragraph names its own run.
 #
-# This file triages the non-annotation survivors of `miniscript.py` and
-# of the script inference in descriptors.py, not the rest of
-# descriptors.py or key_expression.py, and they split into these kinds:
+# This file triages the non-annotation survivors of `miniscript.py`, and
+# of the script inference, the defaults and the wallet-policy placeholder
+# refusal in descriptors.py, not the rest of descriptors.py or
+# key_expression.py, and they split into these kinds:
 #
 # - the type-property algebra, which is what this scope was written to
 #   ask about -- and the class is smaller than the survivor list makes it
@@ -153,6 +154,16 @@ excluded-modules = []
 #     the only two.
 #   - `_or_input`'s `fragment == "or_b"` weakened to `<=`: it is reached
 #     for "or_b", "or_c", "or_d" and "or_i" only, and "or_b" sorts first.
+# - the defaults of descriptors.py and of miniscript.py's
+#   `SpendContext`, and the refusal beside one, read off the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41): the `index` of
+#   `Descriptor.expand` and the `multipath_index` of
+#   `wallet_policy_descriptor`, both 0, and `_resolved_placeholder`'s
+#   `match[0]`, the placeholder it names when it refuses one out of
+#   range. Each dies in tests/descriptors/defaults_test.py, and so does
+#   `SpendContext`'s `sequence: int = 0` turned into -1, a mutant the
+#   run did not sample.
 # - the script inference in descriptors.py, Core's `Solver`,
 #   `MatchMultisig` and `MatchMultiA` beside it, read off the mutation run
 #   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
