@@ -59,11 +59,13 @@ def test_bip32_key_origin() -> None:
     # and assert_valid still asks. The field is annotated Sequence[int]
     # and holds the list `indexes_from_der_path` built, so the dataclass
     # being frozen stops a rebinding and not an append: the constructor
-    # is not the only way an out-of-range index reaches the field
-    key_origin = BIP32KeyOrigin("deadbeef", [0])
-    cast("list[int]", key_origin.der_path).append(0xFFFFFFFF + 1)
-    with pytest.raises(BTClibValueError, match="invalid der_path element"):
-        key_origin.assert_valid()
+    # is not the only way an out-of-range index reaches the field, on
+    # either side of the range
+    for out_of_range in (0xFFFFFFFF + 1, -1):
+        key_origin = BIP32KeyOrigin("deadbeef", [0])
+        cast("list[int]", key_origin.der_path).append(out_of_range)
+        with pytest.raises(BTClibValueError, match="invalid der_path element"):
+            key_origin.assert_valid()
 
     description = master_fingerprint = "deadbeef"
     key_origin = BIP32KeyOrigin.from_description(description)
@@ -242,6 +244,21 @@ def test_assert_valid_hd_key_paths_checks_every_entry() -> None:
         assert_valid_hd_key_paths(hd_key_paths)
 
 
+def test_assert_valid_hd_key_paths_takes_a_large_map() -> None:
+    """A map of distinct origins is valid however many entries it holds.
+
+    The duplicate check compares two lengths. Past the small ints CPython
+    keeps a single object of, two equal lengths are two objects, so `is
+    not` in place of the comparison would refuse this map. The keys are
+    78 octets, which `assert_valid_hd_key_paths` does not read as points.
+    """
+    entries = 4096
+    hd_key_paths = {
+        i.to_bytes(78, "big"): BIP32KeyOrigin("deadbeef", [i]) for i in range(entries)
+    }
+    assert_valid_hd_key_paths(hd_key_paths)
+
+
 def test_dataclasses_json_dict_key_origin(json_golden: JsonGolden) -> None:
     """Round-trip a BIP32KeyOrigin through dict, against the golden json."""
     key_origin = BIP32KeyOrigin.from_description("deadbeef//44h/0'/1H/0/10/")
@@ -379,6 +396,9 @@ def test_from_description_reads_a_slash_after_the_fingerprint() -> None:
         "deadbeefX0h/1",
         "deadbeef\N{IDEOGRAPHIC SPACE}",
         "deadbeef0",
+        # characters that sort before "/" as well as after it
+        "deadbeef-1",
+        "deadbeef.0/1",
     ):
         with pytest.raises(BTClibValueError, match=err_msg):
             BIP32KeyOrigin.from_description(description)
@@ -387,6 +407,10 @@ def test_from_description_reads_a_slash_after_the_fingerprint() -> None:
     assert BIP32KeyOrigin.from_description("deadbeef") == empty
     assert BIP32KeyOrigin.from_description("deadbeef/") == empty
     assert BIP32KeyOrigin.from_description("deadbeef/1").der_path == [1]
+    # the path is what follows the "/", read as `indexes_from_der_path`
+    # reads a path, so a leading m is skipped there as well
+    expected = BIP32KeyOrigin("deadbeef", "m/0h")
+    assert BIP32KeyOrigin.from_description("deadbeef/m/0h") == expected
 
 
 def test_from_description_refuses_padding_after_the_path() -> None:

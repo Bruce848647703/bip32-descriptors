@@ -210,6 +210,47 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 # `int.from_bytes` calls in the derivation functions, and the
 # public-key-prefix set `{2, 3}`'s own numeric neighbors, both sampled
 # rather than exhausted.
+#
+# `der_path.py` and `key_origin.py` again, read off the mutation run
+# https://github.com/btclib-org/bip32-descriptors/actions/runs/42593958370
+# (issue btclib-org/bip32-descriptors#41), each survivor run again
+# against the whole suite. These die there, in tests outside tests/bip32
+# that this profile's command does not run, so a run of it reports them
+# alive again:
+#
+# - `_MAX_DIGITS` raised by one, in tests/descriptors/descriptors_test.py.
+# - the keyword-only `*` turned into `/` before `check_validity`, in
+#   tests/check_validity_test.py, and before the `bip380_enforced` of
+#   `int_from_index_str`, `indexes_from_der_path` and
+#   `hardenings_from_der_path`, in tests/bool_parameter_test.py.
+#
+# Of the rest, `BIP32KeyOrigin.assert_valid`'s `0 <= i` widened to
+# `-1 <= i`, `from_description`'s `data[8] != "/"` weakened to `>` and
+# its `data[9:]` widened to `data[8:]`, and `assert_valid_hd_key_paths`'
+# length comparison turned into `is not` die in
+# tests/bip32/key_origin_test.py. These operators are equivalent:
+#
+# - `_index_and_hardening_from_str`'s `index + (HARDENED_OFFSET if
+#   hardening else 0)` turned into `|` or `^`: the line before refuses
+#   an index at or above the offset, so its top bit is clear and the
+#   three agree.
+# - `str_from_index_int`'s `index - HARDENED_OFFSET` turned into `%` or
+#   `^`: the index there is at least the offset and at most 0xffffffff,
+#   so its top bit is set and the three agree.
+# - `_indexes_from_der_path`'s `len(der_path) % 4 != 0` weakened to
+#   `> 0`: a remainder by 4 is never negative.
+# - the keyword-only `*` turned into `/` in `_index_and_hardening_from_str`,
+#   `_pairs_from_der_path_str` and `_pairs_from_der_path`: the three are
+#   private, and every call passes the path, and `skip_m` where there is
+#   one, by position and `bip380_enforced` by keyword, which both
+#   signatures accept.
+# - `assert_valid_hd_key_paths`' `len(values) > len(serializations)`
+#   turned into `!=`: the set of the values' serializations is never
+#   larger than the values.
+# - `assert_valid_hd_key_paths`' `len(pub_key) != 78` weakened to `<`:
+#   the check before it has refused every length but 78, 33 and 65.
+# - `RemoveDecorator` on `BIP32KeyOrigin.__hash__`'s `@override`: it
+#   only marks the method, and nothing in the package reads the mark.
 
 [cosmic-ray.distributor]
 name = "local"
