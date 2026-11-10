@@ -1000,16 +1000,40 @@ def test_a_pub_key_of_another_type_is_refused(pub_key: Any) -> None:
         KeyExpression(pub_key=pub_key)
 
 
-@pytest.mark.parametrize(
-    "key",
-    [KeyExpression(), _RANGED_KEY, _MUSIG],
-    ids=["no key", "xkey", "musig"],
-)
+@pytest.mark.parametrize("key", [_RANGED_KEY, _MUSIG], ids=["xkey", "musig"])
 def test_an_x_only_key_with_no_pub_key_is_refused(key: KeyExpression) -> None:
     """`parse` reads an extended key and a ``musig()`` as not x-only."""
     assert not key.x_only
     with pytest.raises(BTClibValueError, match="^invalid x-only key: no pub_key$"):
         replace(key, x_only=True)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{}, {"wildcard": 0}, {"der_path": (0,)}],
+    ids=["empty", "wildcard", "der_path"],
+)
+def test_a_key_expression_with_no_key_is_refused(kwargs: dict[str, Any]) -> None:
+    """A key expression must have a pub_key, xkey, or participants."""
+    with pytest.raises(BTClibValueError, match="^No key provided$"):
+        KeyExpression(**kwargs)
+
+
+@pytest.mark.parametrize("step", [-1, 2**32, 2**32 + 1])
+def test_an_invalid_der_path_step_is_refused(step: int) -> None:
+    """A der_path step outside 0..2**32-1 is refused."""
+    with pytest.raises(
+        BTClibValueError, match=r"^invalid index: not in 0\.\.2\*\*32-1$"
+    ):
+        KeyExpression(xkey=_RANGED_KEY.xkey, der_path=(step,))
+
+
+@pytest.mark.parametrize("step", ["0", 1.5, True])
+def test_a_der_path_step_of_invalid_type_is_refused(step: Any) -> None:
+    """A der_path step that is not an integer is refused."""
+    err_msg = f"^invalid derivation index type: {type(step).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        KeyExpression(xkey=_RANGED_KEY.xkey, der_path=(step,))
 
 
 def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:

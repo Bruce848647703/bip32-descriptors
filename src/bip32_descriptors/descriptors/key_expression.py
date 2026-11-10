@@ -57,6 +57,7 @@ from bip32_descriptors.bip32.der_path import (
     _BIP380_HARDENINGS,
     _HARDENING,
     HARDENED_OFFSET,
+    _assert_valid_index,
     hardenings_from_der_path,
     indexes_from_der_path,
     str_from_der_path,
@@ -387,7 +388,7 @@ class KeyExpression:
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Check `pub_key`, `xkey`, `participants`, `wildcard` and `hardening`.
+        """Check key fields, `der_path`, `wildcard` and `hardening`.
 
         A `pub_key` is the SEC bytes of a point, as `_assert_pub_key` says,
         and the whole key: no `xkey`, `participants`, `der_path` or
@@ -410,6 +411,8 @@ class KeyExpression:
         if not isinstance(self.participants, tuple):
             err_msg = f"invalid participants type: {type(self.participants).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
+        for step in self.der_path:
+            _assert_valid_index(step)
         _assert_pub_key(self)
         _assert_fixed_key_alone(self)
         _assert_hardening(self.hardening)
@@ -418,6 +421,8 @@ class KeyExpression:
         if not isinstance(self.xkey, str):
             err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
+        if not (self.pub_key or self.xkey or self.participants):
+            raise BTClibValueError(_NO_KEY)
         if not self.xkey or _PLACEHOLDER.fullmatch(self.xkey):
             return
         try:
@@ -1003,9 +1008,6 @@ def _assert_musig_path(key: KeyExpression) -> None:
     if key.wildcard:
         raise BTClibValueError(_HARDENED_MUSIG_WILDCARD)
     for index in key.der_path:
-        if not is_integer(index):
-            err_msg = f"invalid derivation index type: {type(index).__name__}"
-            raise BTClibTypeError(err_msg)
         if HARDENED_OFFSET <= index < 2 * HARDENED_OFFSET:
             raise BTClibValueError(_HARDENED_MUSIG_STEP)
 
