@@ -2777,10 +2777,9 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
     tapscript holds and not the only spelling a KEY expression has.
     """
     args = _split_unpaired_arguments(text)
+    threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
         raise BTClibValueError(f"{name}() takes a threshold and at least one key")
-    if not _THRESHOLD.fullmatch(args[0]):
-        raise BTClibValueError(f"invalid {name}() threshold: digits expected")
     keys, lengths = _read_multipath_keys(
         args[1:],
         lambda key: _parse_key(
@@ -2788,7 +2787,6 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
         ),
     )
     _assert_multisig_end(name, text, args)
-    threshold = _int_from_digits(args[0], f"{name}() threshold")
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
     if len(keys) > _MAX_MULTI_A_KEYS:
@@ -3089,7 +3087,7 @@ def _parse_multi(
 
 
 def _read_multi_threshold(name: str, text: str) -> int:
-    """Return the threshold of a ``multi()`` or ``sortedmulti()``.
+    """Return the threshold of a multisig function or taproot leaf.
 
     Bitcoin Core reads it as a uint32 before it reads or counts the keys,
     so a threshold it cannot read is the fault named, whatever the keys

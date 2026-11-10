@@ -5043,6 +5043,38 @@ _NOT_DIGITS = r"^invalid multi\(\) threshold: digits expected$"
         ("wsh(multi(-1,zz))", _NOT_DIGITS),
         ("wsh(multi(,zz))", _NOT_DIGITS),
         ("wsh(multi(x))", _NOT_DIGITS),
+        (
+            f"tr({XONLY},multi_a(99999999999,zz))",
+            r"^invalid multi_a\(\) threshold: more than 10 digits$",
+        ),
+        (
+            f"tr({XONLY},sortedmulti_a(99999999999,zz))",
+            r"^invalid sortedmulti_a\(\) threshold: more than 10 digits$",
+        ),
+        (
+            f"tr({XONLY},multi_a(4294967296,zz))",
+            r"^invalid multi_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},sortedmulti_a(4294967296,zz))",
+            r"^invalid sortedmulti_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},multi_a(000000000000000000004294967296,zz))",
+            r"^invalid multi_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},multi_a(4294967296))",
+            r"^invalid multi_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},multi_a(+1,zz))",
+            r"^invalid multi_a\(\) threshold: digits expected$",
+        ),
+        (
+            f"tr({XONLY},multi_a(x))",
+            r"^invalid multi_a\(\) threshold: digits expected$",
+        ),
     ],
 )
 def test_a_multisig_threshold_is_refused_before_its_keys(
@@ -5051,21 +5083,33 @@ def test_a_multisig_threshold_is_refused_before_its_keys(
     """Core: Multi threshold '...' is not valid.
 
     Core reads the threshold as a uint32 before it reads or counts the
-    keys, so ``zz`` is never read as one.
+    keys, so ``zz`` is never read as one. Issues
+    btclib-org/bip32-descriptors#17 and
+    btclib-org/bip32-descriptors#102.
     """
     with pytest.raises(BTClibValueError, match=message):
         parse(descriptor)
 
 
 @pytest.mark.parametrize(
+    "template,key_label",
+    [
+        ("wsh(multi({},zz))", "key 0"),
+        (f"tr({XONLY},multi_a({{}},zz))", "key 1"),
+    ],
+    ids=["wsh-multi", "tr-multi_a"],
+)
+@pytest.mark.parametrize(
     "threshold", ["0", "4294967295", "04294967295", "000000000000000000004294967295"]
 )
 def test_a_multisig_threshold_core_reads_is_followed_by_its_keys(
-    threshold: str,
+    template: str, key_label: str, threshold: str
 ) -> None:
     """Core: Multi: key 'zz' is not valid."""
-    with pytest.raises(BTClibValueError, match="^key 0: invalid key expression$"):
-        parse(f"wsh(multi({threshold},zz))")
+    with pytest.raises(
+        BTClibValueError, match=f"^{key_label}: invalid key expression$"
+    ):
+        parse(template.format(threshold))
 
 
 def test_a_multisig_threshold_is_refused_without_quoting_it() -> None:
@@ -5073,6 +5117,10 @@ def test_a_multisig_threshold_is_refused_without_quoting_it() -> None:
     decimal = str(int(HEX_PRV, 16))
     with pytest.raises(BTClibValueError, match=_MORE_DIGITS) as e:
         parse(f"wsh(multi({decimal},{KEY}))")
+    assert_secret_free(e.value, [decimal])
+    err_msg = r"^invalid multi_a\(\) threshold: more than 10 digits$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        parse(f"tr({XONLY},multi_a({decimal},{XONLY}))")
     assert_secret_free(e.value, [decimal])
 
 
