@@ -37,7 +37,9 @@ package accepts it.
 
 from __future__ import annotations
 
+import pickle
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 from btclib.alias import Octets
@@ -47,6 +49,7 @@ from btclib.script.limits import MAX_SCRIPT_ELEMENT_SIZE, MAX_SCRIPT_SIZE
 from btclib.script.taproot import check_output_pubkey
 
 from bip32_descriptors.descriptors import (
+    Descriptor,
     MiniscriptDescriptor,
     RawDescriptor,
     RawLeaf,
@@ -1110,15 +1113,61 @@ def test_a_rawpkh_fits_every_position_that_embeds_it(wrap: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "wrapper, name, limit",
+    [
+        (ShDescriptor, "sh", MAX_SCRIPT_ELEMENT_SIZE),
+        (WshDescriptor, "wsh", MAX_SCRIPT_SIZE),
+    ],
+    ids=["sh", "wsh"],
+)
+def test_a_hand_built_raw_over_the_limit_is_refused(
+    wrapper: type[ShDescriptor | WshDescriptor], name: str, limit: int
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    The limit itself is built, and parses back. Issue
+    btclib-org/bip32-descriptors#175.
+    """
+    largest = wrapper(RawDescriptor(bytes(limit)))
+    assert parse(str(largest)) == largest
+    over = RawDescriptor(bytes(limit + 1))
+    err_msg = (
+        rf"^raw\(\) inside {name}\(\) is {limit + 1} bytes,"
+        rf" over the {limit}-byte limit$"
+    )
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"{name}({over})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(over)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(largest, inner=over)
+
+
+def _forged(text: str, inner: Descriptor) -> Descriptor:
+    """Return the ``sh()`` or ``wsh()`` of `text` holding `inner`.
+
+    As an unpickled one can: unpickling skips the refusal of a
+    ``raw()`` over the limit that building one makes.
+    """
+    forged: Descriptor = pickle.loads(pickle.dumps(parse(text)))  # noqa: S301
+    object.__setattr__(forged, "inner", inner)
+    return forged
+
+
+@pytest.mark.parametrize(
     "descriptor",
     [
-        ShDescriptor(RawDescriptor(bytes(MAX_SCRIPT_ELEMENT_SIZE + 1))),
-        WshDescriptor(RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1))),
-        ShDescriptor(WshDescriptor(RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1)))),
+        _forged("sh(raw(51))", RawDescriptor(bytes(MAX_SCRIPT_ELEMENT_SIZE + 1))),
+        _forged("wsh(raw(51))", RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1))),
+        _forged(
+            "sh(wsh(raw(51)))",
+            _forged("wsh(raw(51))", RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1))),
+        ),
     ],
+    ids=["sh", "wsh", "sh-wsh"],
 )
-def test_a_hand_built_raw_over_the_limit_answers_nothing(
-    descriptor: ShDescriptor | WshDescriptor,
+def test_an_unpickled_raw_over_the_limit_answers_nothing(
+    descriptor: Descriptor,
 ) -> None:
     """Every question fails as `script_pub_key` does, on the one fault."""
     for question in (

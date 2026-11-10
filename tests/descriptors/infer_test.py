@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160
-from btclib.key import PubKeyData
+from btclib.key import PrvKeyData, PubKeyData
 from btclib.network import NETWORKS
 from btclib.script.script import serialize
 from btclib.script.script_pub_key import ScriptPubKey
@@ -487,6 +487,19 @@ def test_a_wsh_holds_no_uncompressed_key() -> None:
     script = ScriptPubKey.p2wsh(inner).script
     inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
     assert inferred == _addr(script)
+
+
+def test_a_sh_multisig_over_the_push_limit_is_an_address() -> None:
+    """Core infers a ``sh(multi())`` of it, which `parse` refuses.
+
+    Sixteen keys make a 547-byte redeem script.
+    """
+    keys = [PrvKeyData(prv_key).pub.sec for prv_key in range(1, 17)]
+    inner = serialize(["OP_1", *keys, "OP_16", "OP_CHECKMULTISIG"])
+    script = b"\xa9\x14" + hash160(inner) + b"\x87"
+    inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
+    assert inferred == _addr(script)
+    assert inferred.startswith("addr(")
 
 
 def test_a_miniscript_core_refuses_is_no_miniscript() -> None:

@@ -1111,6 +1111,12 @@ def _assert_outside_taproot(key: KeyExpression) -> None:
         raise BTClibValueError(_X_ONLY_REFUSED)
 
 
+def _assert_compressed(key: KeyExpression) -> None:
+    """Refuse an uncompressed key, with `parse`'s message."""
+    if not key.is_compressed:
+        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
+
+
 # Bitcoin Core's own message, refusing a key path with two multipath steps
 _MULTIPLE_MULTIPATH = "Multiple multipath key path specifiers found"
 _ONE_ITEM_STEP = "a multipath step takes at least two elements"
@@ -1694,8 +1700,8 @@ def _read_key(
         hardening=origin_hardening or _HARDENING,
         wif_prefix=b"" if _HEX.fullmatch(key) else base58_decode(key)[:1],
     )
-    if compressed and not key_expression.is_compressed:
-        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
+    if compressed:
+        _assert_compressed(key_expression)
     wifs = _FILED_WIFS.get()
     if key_expression.wif_prefix and wifs is not None:
         _file_wif(key_expression, key, wifs)

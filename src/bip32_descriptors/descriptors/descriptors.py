@@ -162,7 +162,7 @@ from collections.abc import (
     MutableMapping,
     Sequence,
 )
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, replace
 from typing import Any, cast
@@ -214,6 +214,7 @@ from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
     PrvKeys,
     Wifs,
+    _assert_compressed,
     _assert_index_range,
     _assert_multipath_keys,
     _assert_musig_allowed,
@@ -1510,17 +1511,26 @@ class Descriptor(ABC):
         return hd_key_paths
 
 
-def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
-    """Refuse a key ``tr()`` and ``rawtr()`` alone take.
+def _assert_keys(
+    keys: Iterable[KeyExpression], check: Callable[[KeyExpression], None]
+) -> None:
+    """Refuse a key `check` refuses, with `parse`'s message.
 
-    A ``musig()``, and an x-only key. The message is `parse`'s, which
-    names the key by its index in `keys`.
+    The message names the key by its index in `keys`.
     """
     for position, key in enumerate(keys):
         try:
-            _assert_outside_taproot(key)
+            check(key)
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
+
+
+def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
+    """Refuse a key ``tr()`` and ``rawtr()`` alone take.
+
+    A ``musig()``, and an x-only key, as `_assert_keys` refuses it.
+    """
+    _assert_keys(keys, _assert_outside_taproot)
 
 
 @dataclass(frozen=True)
@@ -1669,7 +1679,12 @@ class WpkhDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class ShDescriptor(Descriptor):
-    """``sh(SCRIPT)``: the argument, p2sh-embedded, BIP381."""
+    """``sh(SCRIPT)``: the argument, p2sh-embedded, BIP381.
+
+    An argument `parse` refuses inside ``sh()`` by its function, by the
+    size of its script or by the number of keys of a ``multi()`` is
+    refused when built, with `parse`'s message.
+    """
 
     inner: Descriptor
 
@@ -1678,6 +1693,7 @@ class ShDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2SH)
+        _assert_embedded(self.inner, _P2SH)
 
     @override
     def __str__(self) -> str:
@@ -1734,7 +1750,12 @@ class ShDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class WshDescriptor(Descriptor):
-    """``wsh(SCRIPT)``: the argument, P2WSH-embedded, BIP382."""
+    """``wsh(SCRIPT)``: the argument, P2WSH-embedded, BIP382.
+
+    An argument `parse` refuses inside ``wsh()`` by its function, by an
+    uncompressed key, by the size of its script or by the number of keys
+    of a ``multi()`` is refused when built, with `parse`'s message.
+    """
 
     inner: Descriptor
 
@@ -1743,6 +1764,7 @@ class WshDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2WSH)
+        _assert_embedded(self.inner, _P2WSH)
 
     @override
     def __str__(self) -> str:
@@ -2253,8 +2275,9 @@ def _embedded(
 ) -> bytes:
     """Return the script a ``sh()`` or a ``wsh()`` embeds.
 
-    Refused where the descriptor has no script for it, so that a
-    hand-built one over the size limit answers nothing else either.
+    Refused where the descriptor has no script for it, so that one over
+    the size limit answers nothing else either: unpickling builds one
+    without the refusal of `__post_init__`.
     """
     descriptor._scripts(index, prv_keys)
     return descriptor.inner.redeem_script(index, prv_keys)
@@ -2710,6 +2733,22 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
         err_msg = f"{type(inner).__name__} writes no function parse reads"
         raise BTClibValueError(f"{err_msg} inside {context}")
     _assert_position(name, context, _PARSERS[name][0])
+
+
+def _assert_embedded(inner: Descriptor, context: str) -> None:
+    """Refuse an argument `parse` refuses in `context` past its function.
+
+    An uncompressed key, the size of its script, and the number of keys
+    of a ``multi()``, with `parse`'s messages. ``sh()`` and ``wsh()`` hold
+    no key of their own, so a key's index in `inner` is the position
+    `parse` names.
+    """
+    if _no_uncompressed(context):
+        _assert_keys(inner.key_expressions, _assert_compressed)
+    if isinstance(inner, MultiDescriptor):
+        _assert_multi_size(str(inner).partition("(")[0], inner.keys, context)
+    elif isinstance(inner, RawDescriptor):
+        _assert_raw_size(inner.script, context)
 
 
 def _function_read(text: str) -> str | None:
@@ -3206,11 +3245,16 @@ def _parse_raw(
     args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    _assert_raw_size(script, context)
+    return RawDescriptor(script, network=network)
+
+
+def _assert_raw_size(script: bytes, context: str) -> None:
+    """Refuse a ``raw()`` script over the limit of what embeds it."""
     limit = _EMBEDDED_SCRIPT_SIZE.get(context)
     if limit is not None and len(script) > limit:
         err_msg = f"raw() inside {context} is {len(script)} bytes"
         raise BTClibValueError(f"{err_msg}, over the {limit}-byte limit")
-    return RawDescriptor(script, network=network)
 
 
 def _parse_rawpkh(
@@ -4433,7 +4477,11 @@ def _inferred(  # noqa: C901, PLR0911, PLR0912  # sourcery skip: low-code-qualit
     if kind == "scripthash" and context == _TOP and data[0] in known.scripts:
         inner = _inferred(known.scripts[data[0]], _P2SH, known, network)
         if inner is not None:
-            return ShDescriptor(inner, network=network)
+            # refused for a multisig redeem script over the push limit,
+            # which Core infers and `parse` refuses: the output is then
+            # an addr(), as for any text that does not parse back
+            with suppress(BTClibValueError):
+                return ShDescriptor(inner, network=network)
     if kind == "witness_v0_scripthash" and context in (_TOP, _P2SH):
         witness_script = known.scripts.get(ripemd160(data[0]))
         if witness_script is not None:

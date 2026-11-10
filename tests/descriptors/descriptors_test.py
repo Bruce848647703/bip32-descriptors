@@ -5139,11 +5139,12 @@ def test_a_redeem_script_over_520_bytes_is_refused(
         parse(f"sh({name}(1,{keys}))")
 
 
-def test_a_hand_built_sh_over_520_bytes_has_no_spend() -> None:
+def test_an_unpickled_sh_over_520_bytes_has_no_spend() -> None:
     """`satisfy` refuses as `script_pub_key` does: no spend without an output.
 
     Sixteen keys make the 547-byte redeem script the parser refuses above,
-    so the descriptor is built by hand.
+    and so does `ShDescriptor` when built. Unpickling skips that refusal,
+    so the descriptor is an unpickled one given the keys.
     """
     multi = MultiDescriptor(
         1,
@@ -5152,7 +5153,8 @@ def test_a_hand_built_sh_over_520_bytes_has_no_spend() -> None:
             for prv_key in range(1, 17)
         ),
     )
-    descriptor = ShDescriptor(multi)
+    descriptor = pickle.loads(pickle.dumps(parse(f"sh(multi(1,{KEY}))")))  # noqa: S301
+    object.__setattr__(descriptor, "inner", multi)
     for question in (
         descriptor.script_pub_key,
         lambda: descriptor.satisfy(signatures_of(KEY_A)),

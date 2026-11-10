@@ -31,6 +31,11 @@ btclib-org/bip32-descriptors#179.
 
 A ``musig()`` whose `hardening` is not h is refused too. Issue
 btclib-org/bip32-descriptors#181.
+
+`WshDescriptor` refuses an argument holding an uncompressed key, and
+both it and `ShDescriptor` refuse one whose script size or number of
+``multi()`` keys `parse` refuses there. Issue
+btclib-org/bip32-descriptors#175.
 """
 
 from __future__ import annotations
@@ -1014,6 +1019,119 @@ def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:
         parse(f"tr({_UNCOMPRESSED_WIF})")
     with pytest.raises(BTClibValueError, match=f"^{err_msg}$"):
         KeyExpression(pub_key=_UNCOMPRESSED, x_only=True)
+
+
+_U_KEY = KeyExpression(pub_key=_UNCOMPRESSED)
+_KEYS = tuple(KeyExpression(pub_key=PrvKeyData(i).pub.sec) for i in range(1, 22))
+_P2WSH = miniscript.P2WSH
+
+
+def _and_v_older(key: KeyExpression) -> MiniscriptDescriptor:
+    """Return ``and_v(v:pk(KEY),older(1))``, built by hand.
+
+    A P2WSH `Miniscript` node takes an uncompressed key when built, which
+    `miniscript.parse` refuses.
+    """
+    pk_k = miniscript.Miniscript("pk_k", _P2WSH, keys=(key,))
+    verify = miniscript.Miniscript(
+        "v:", _P2WSH, (miniscript.Miniscript("c:", _P2WSH, (pk_k,)),)
+    )
+    older = miniscript.Miniscript("older", _P2WSH, threshold=1)
+    return MiniscriptDescriptor(miniscript.Miniscript("and_v", _P2WSH, (verify, older)))
+
+
+_UNCOMPRESSED_HERE = "uncompressed public keys are not allowed here"
+# (wrapper, its argument, the refusal `parse` gives for their text)
+_REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]] = [
+    (WshDescriptor, PkDescriptor(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+    (WshDescriptor, PkhDescriptor(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+    (
+        WshDescriptor,
+        MultiDescriptor(1, (_C_KEY, _U_KEY)),
+        f"key 1: {_UNCOMPRESSED_HERE}",
+    ),
+    (
+        WshDescriptor,
+        MultiDescriptor(1, (_U_KEY, _C_KEY), sort=True),
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+    (WshDescriptor, _and_v_older(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+    (
+        WshDescriptor,
+        MultiDescriptor(1, _KEYS),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        MultiDescriptor(1, _KEYS),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        MultiDescriptor(1, _KEYS[:16]),
+        (
+            "multi() inside sh() is a 547-byte redeem script,"
+            " over the 520-byte push limit"
+        ),
+    ),
+    (
+        ShDescriptor,
+        MultiDescriptor(1, (_U_KEY,) * 8, sort=True),
+        (
+            "sortedmulti() inside sh() is a 531-byte redeem script,"
+            " over the 520-byte push limit"
+        ),
+    ),
+]
+_REFUSED_INSIDE_IDS = [
+    "wsh-pk",
+    "wsh-pkh",
+    "wsh-multi",
+    "wsh-sortedmulti",
+    "wsh-miniscript",
+    "wsh-21-keys",
+    "sh-21-keys",
+    "sh-547-bytes",
+    "sh-531-bytes",
+]
+
+
+@pytest.mark.parametrize(
+    "wrapper,inner,refusal", _REFUSED_INSIDE, ids=_REFUSED_INSIDE_IDS
+)
+def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
+    wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    A ``raw()`` over the size limit is tried in `raw_descriptors_test`.
+    Issue btclib-org/bip32-descriptors#175.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"{_WRAPPERS[wrapper]}({inner})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(inner)
+    parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+@pytest.mark.parametrize(
+    "wrapper,inner",
+    [
+        (ShDescriptor, PkDescriptor(_U_KEY)),
+        (ShDescriptor, MultiDescriptor(1, (_U_KEY,) * 7)),
+        (ShDescriptor, MultiDescriptor(1, _KEYS[:15])),
+        (WshDescriptor, MultiDescriptor(1, _KEYS[:20])),
+    ],
+    ids=["sh-pk", "sh-465-bytes", "sh-513-bytes", "wsh-20-keys"],
+)
+def test_a_key_or_size_parse_takes_inside_sh_or_wsh_is_built(
+    wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor
+) -> None:
+    """The control: what `parse` reads there is built, and parses back."""
+    assert parse(str(wrapper(inner))) == wrapper(inner)
 
 
 @pytest.mark.parametrize(
