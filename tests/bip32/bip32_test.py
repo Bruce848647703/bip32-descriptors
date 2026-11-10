@@ -182,6 +182,35 @@ def test_exceptions() -> None:
     assert rootxprv_from_seed("00" * 64)
 
 
+def test_a_quoted_checksum_is_cut_and_other_refusals_are_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`b58decode` keeps base58's refusal, except for the checksums it quotes.
+
+    At the btclib floor pyproject.toml names, a bad checksum is refused
+    quoting the right one, a hash of the key: this is that message, as
+    btclib's `base58.decode` wrote it there for this key. Any other
+    refusal is kept whole, the part after its colon included.
+    """
+    xkey = "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjq"
+
+    def decode(_: str) -> bytes:
+        raise BTClibValueError("invalid checksum: 0xb38b79a4 instead of 0x84a7e524")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(base58, "decode", decode)
+        with pytest.raises(BTClibValueError) as e:
+            BIP32KeyData.b58decode(xkey)
+    assert str(e.value) == "invalid checksum"
+    # nor is either checksum in the refusal's chain, which a traceback shows
+    for checksum in ("0xb38b79a4", "0x84a7e524"):
+        assert checksum not in chained_text(e.value)
+
+    with pytest.raises(BTClibValueError) as e:
+        BIP32KeyData.b58decode("1" * 200)
+    assert str(e.value) == "too many base58 characters: 200, max is 112"
+
+
 def test_an_xkey_decodes_however_its_text_is_held() -> None:
     """`b58decode` takes a String, and a String is text or any buffer.
 
@@ -1232,6 +1261,20 @@ def test_is_root_is_all_three_fields_and_not_just_one() -> None:
         check_validity=False,
     )
     assert not negative_index.is_root
+
+    # and a parent fingerprint of zeros shorter than four bytes, which
+    # sorts before four of them: the fingerprint compared with `<=`
+    # instead of `==` would call this one root
+    short_fingerprint = BIP32KeyData(
+        version=root.version,
+        depth=0,
+        parent_fingerprint=b"\x00" * 3,
+        index=0,
+        chain_code=root.chain_code,
+        key=root.key,
+        check_validity=False,
+    )
+    assert not short_fingerprint.is_root
 
 
 def test_is_hardened_is_not_narrowed_to_the_boundary_alone() -> None:

@@ -251,6 +251,44 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 #   the check before it has refused every length but 78, 33 and 65.
 # - `RemoveDecorator` on `BIP32KeyOrigin.__hash__`'s `@override`: it
 #   only marks the method, and nothing in the package reads the mark.
+#
+# `bip32.py` from the same run, its first part: `BIP32KeyData`, the
+# decoding cache and the validity checks it calls, each survivor again
+# run against the whole suite. These die there, outside tests/bip32:
+#
+# - the keyword-only `*` turned into `/` before `check_validity` in
+#   `serialize`, `b58encode`, `parse` and `b58decode`, in
+#   tests/check_validity_test.py.
+# - `parse`'s `len(key_bin) != _REQUIRED_LENGTH` weakened to `>`, in
+#   tests/fuzz_test.py.
+#
+# `_cached_base58_decode`'s cut of a quoted checksum, `maxsplit=1` turned
+# into 0, `[0]` into `[-1]` and its `not` dropped or doubled, and
+# `is_root`'s `parent_fingerprint == b"\x00" * 4` weakened to `<=` die in
+# tests/bip32/bip32_test.py. The lock's btclib quotes no checksum, so the
+# test hands `b58decode` the message the floor's does. These operators
+# are equivalent, where the paragraphs above have not named them:
+#
+# - `@functools.lru_cache(maxsize=2048)` on `_cached_base58_decode`
+#   removed, or its size moved by one: the function returns the bytes
+#   `base58.decode` does, a refusal is raised and never cached, and
+#   nothing reads the cache, so what changes is how often it decodes.
+# - `maxsplit=1` turned into 2: the part before the first ": " is the
+#   same.
+# - `_assert_valid_depth_and_index`'s `depth == 0` weakened to `<= 0`: a
+#   negative depth is refused by the check before it.
+# - `_assert_valid_key`'s `key[0] != 0` weakened to `> 0`: a byte is
+#   never below zero.
+# - `BIP32KeyData`'s `@dataclass(init=False)` turned into `init=True`:
+#   the class defines its own `__init__`, which `dataclass` keeps.
+# - `RemoveDecorator` on `BIP32KeyData.__repr__`'s `@override`: nothing
+#   in the package reads the mark.
+# - `assert_valid`'s `len(value) != size` and `parse`'s
+#   `len(key_bin) != _REQUIRED_LENGTH` turned into `is not`: the two
+#   differ only where the length equals the size, and the sizes are
+#   ints CPython keeps one object of.
+# - `parse`'s `len(key_bin) != _REQUIRED_LENGTH` weakened to `<`:
+#   `stream.read(_REQUIRED_LENGTH)` never returns more.
 
 [cosmic-ray.distributor]
 name = "local"
