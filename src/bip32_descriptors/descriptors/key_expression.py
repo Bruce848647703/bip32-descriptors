@@ -404,6 +404,12 @@ class KeyExpression:
         character, which decodes as no key -- and where only its checksum
         changed still spells one.
         """
+        if not isinstance(self.der_path, tuple):
+            err_msg = f"invalid der_path type: {type(self.der_path).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+        if not isinstance(self.participants, tuple):
+            err_msg = f"invalid participants type: {type(self.participants).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
         _assert_pub_key(self)
         _assert_fixed_key_alone(self)
         _assert_hardening(self.hardening)

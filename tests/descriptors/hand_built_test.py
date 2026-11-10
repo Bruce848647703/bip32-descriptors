@@ -1176,13 +1176,32 @@ def test_a_musig_with_an_xkey_is_refused() -> None:
         ),
         ({"xkey": _XPUB_A, "wildcard": "*"}, "invalid wildcard type: str"),
         ({"xkey": _XPUB_A, "wildcard": True}, "invalid wildcard type: bool"),
+        ({"der_path": [1]}, "invalid der_path type: list"),
+        ({"der_path": 1}, "invalid der_path type: int"),
+        ({"participants": [_FIXED_A, _FIXED_B]}, "invalid participants type: list"),
+        ({"participants": 1}, "invalid participants type: int"),
+        ({"participants": _FIXED_A}, "invalid participants type: KeyExpression"),
     ],
-    ids=["participant", "musig step", "wildcard", "bool wildcard"],
+    ids=[
+        "participant",
+        "musig step",
+        "wildcard",
+        "bool wildcard",
+        "der_path list",
+        "der_path int",
+        "participants list",
+        "participants int",
+        "participants KeyExpression",
+    ],
 )
-def test_a_musig_or_wildcard_field_of_another_type_is_refused(
+def test_a_key_field_of_another_type_is_refused(
     values: dict[str, Any], err_msg: str
 ) -> None:
-    """A participant is a `KeyExpression`, a step and a wildcard an int."""
+    """A key expression checks the type of its fields when built.
+
+    ``der_path`` and ``participants`` are tuples; a participant is a
+    `KeyExpression`, a step and a wildcard an int.
+    """
     with pytest.raises(BTClibTypeError, match=f"^{err_msg}$"):
         KeyExpression(**values)
 
