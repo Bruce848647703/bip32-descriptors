@@ -1628,3 +1628,18 @@ def test_the_estimate_is_the_largest_branch_and_not_the_cheapest() -> None:
     assert sum(len(element) + 1 for element in built) == 109
     assert node.max_witness_size == 220
     assert sum(size + 1 for size in node.max_witness_stack or ()) == 220
+
+
+def test_the_estimate_dissatisfies_a_thresh_with_every_branch() -> None:
+    """Size a dissatisfied thresh() by its stack with no branch satisfied.
+
+    Satisfying more branches than the threshold also dissatisfies it, with
+    more signatures: overcomplete, so malleable, and never built. The
+    estimate prefers a stack that is not malleable to one that is,
+    whatever their sizes, so this ``or_d()`` weighs at most a signature
+    for its ``pk()`` and two empty pushes, which is what
+    `max_witness_size` says.
+    """
+    node = parse(f"or_d(thresh(1,pk({KEYS[0]}),s:pk({KEYS[1]})),pk({KEYS[2]}))")
+    assert node.max_witness_stack == (72, 0, 0)
+    assert node.max_witness_size == 75

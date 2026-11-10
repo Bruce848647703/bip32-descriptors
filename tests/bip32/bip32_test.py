@@ -947,6 +947,22 @@ def test_no_key_material_in_repr_or_exceptions() -> None:
     assert xprv not in str(excinfo.value)
 
 
+def test_the_repr_of_an_empty_key_masks_nothing() -> None:
+    """Print the chain code of an unchecked key data holding no key.
+
+    The repr masks a key whose first byte is 0x00, the private prefix. An
+    empty key has no first byte, so it is not private, and the chain code
+    beside it is printed as a public one is.
+    """
+    data = BIP32KeyData(
+        b"\x04\x88\xb2\x1e", 0, b"\x00" * 4, 0, b"\x01" * 32, b"", check_validity=False
+    )
+    assert repr(data) == (
+        "BIP32KeyData(version=0488b21e, depth=0, parent_fingerprint=00000000, "
+        f"index=0, chain_code={'01' * 32}, key=)"
+    )
+
+
 class _ForcedHmac:
     """An hmac whose digest is chosen rather than computed."""
 

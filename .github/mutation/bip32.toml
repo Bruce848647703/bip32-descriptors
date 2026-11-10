@@ -200,10 +200,11 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 #   class `key_origin.py`'s `_pairs_from_der_path_str` and
 #   `_decode_from_bip32_deriv` are.
 #
-# Checked and left, though not equivalent: `__repr__`'s `self.key[:1] ==
-# b"\x00"` weakened to `<=`. The two differ only on an empty key, which
-# no validated instance holds: the mutant masks its chain code, which the
-# original prints, so the mutant hides more and leaks nothing.
+# `__repr__`'s `self.key[:1] == b"\x00"` weakened to `<=` dies in
+# tests/bip32/bip32_test.py. The two differ only on an empty key, which
+# an instance built with `check_validity=False` can hold: the mutant
+# masks its chain code as if the key were private, where the original
+# prints it.
 #
 # Not chased further, the same shape as the first pass's own note: the
 # `signed=False` reads and writes across the various `to_bytes`/

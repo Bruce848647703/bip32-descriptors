@@ -66,9 +66,9 @@ excluded-modules = []
 # paragraph names its own run.
 #
 # This file triages the non-annotation survivors of `miniscript.py`, and
-# of the script inference, the defaults, the wallet-policy placeholder
-# refusal and the `@override` marks in descriptors.py, not the rest of
-# descriptors.py or key_expression.py, and they split into these kinds:
+# those of descriptors.py and key_expression.py that the mutation run
+# https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+# left on lines that still exist, and they split into these kinds:
 #
 # - the type-property algebra, which is what this scope was written to
 #   ask about -- and the class is smaller than the survivor list makes it
@@ -228,6 +228,43 @@ excluded-modules = []
 #   included. The lint gate tells instead: mypy's `explicit-override`,
 #   which pyproject.toml enables, refuses the removal of every mark in
 #   this scope.
+# - the rest of the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41). These die under the
+#   profile's command: `__descsum_expand`'s `groups[0] * 3 + groups[1]`
+#   in tests/descriptors/descriptors_test.py; `_read_fragment`'s
+#   `pos + 1` in tests/descriptors/miniscript_fallback_test.py; and in
+#   tests/descriptors/miniscript_test.py, `context == TAPSCRIPT` turned
+#   into `is` in `_signature_size`, `Miniscript._assert_keys` and `_sec`,
+#   `_decomposed`'s `spans[-1][2] == len(script)` and
+#   `_Decoder._combinator`'s `op_code == _OP_EQUAL` weakened to `<=`,
+#   `_binary_ops`' `fragment == "or_i"` weakened to `<=`, `_better`'s
+#   `malleable=True` for two unsigned stacks, and `_thresh_input`'s
+#   `malleable=True` on an overcomplete dissatisfaction, without which
+#   an estimate takes that stack, the larger one. These operators are
+#   equivalent:
+#   - `_derived_origin`'s `key.wildcard + index` turned into `^`: a
+#     wildcard is 0 or 2**31, and each caller refuses an index outside
+#     0 to 2**31 - 1 before, by `_assert_index_range` or by
+#     `KeyExpression.sec`, so the two never share a bit.
+#   - `_assert_multi_size`'s `size > MAX_SCRIPT_ELEMENT_SIZE` weakened to
+#     `>=`: the size is 3 plus 34 or 66 for each key, so it is odd, and
+#     the bound is 520.
+#   - key_expression.py's `_origin_and_rest`'s `end < 0` turned into
+#     `end < 1`: the expression starts with "[", so a "]" is found at 1
+#     or later.
+#   - `Miniscript._assert_keys`' `!=` between its two context tests
+#     turned into `is not`: both sides are bools.
+#   - `max_witness_stack`'s index 0 turned into 1: the estimate reads only
+#     the lengths of what it builds, and a key's length does not depend
+#     on the index it is derived at. The two differ only where one index
+#     derives BIP32's invalid child, which BIP32 puts below 1 in 2**127
+#     and no test can find.
+#   - `_fragment_script`'s `subs[0]` for a `v:` turned into `subs[-1]`:
+#     a `v:` has one subexpression.
+#   - `_KEY_CALLS`' `node.keys[0]` for a `pk_k()` and a `pk_h()` turned
+#     into `keys[-1]`, a mutant the run did not sample: `_assert_keys`
+#     gives each of the two fragments one key.
 
 # one mutant at a time, in this working tree: see btclib's sig_hash.toml
 [cosmic-ray.distributor]
