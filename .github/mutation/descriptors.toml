@@ -105,14 +105,11 @@ excluded-modules = []
 #   for the timelock, two signed branches for the "m". All four mutants
 #   are dead now, and the assertions are on the properties themselves
 #   rather than on something downstream of them.
-# - the sizes: `_TX_BODY_LEEWAY_WEIGHT`'s summands rearrange freely, the
-#   stack-limit term beside it takes `^` for `+`, and `_decomposed`'s
-#   `1 + 2 ** (op_code - 76)` -- the push-prefix width -- survives
-#   regardless of the operator. A wrong size here is a wrong fee
-#   estimate rather than an invalid spend, which is why nothing louder
-#   catches it. The prefix width wants a script whose push needs
-#   OP_PUSHDATA, which no standard fragment writes: every key is 33
-#   bytes and every hash 20 or 32.
+# - the sizes: `_TX_BODY_LEEWAY_WEIGHT`'s summands rearrange freely, and
+#   the stack-limit term beside it takes `^` for `+`. A wrong size here
+#   is a wrong fee estimate rather than an invalid spend, which is why
+#   nothing louder catches it. `_decomposed`'s push-prefix width,
+#   `1 + 2 ** (op_code - 76)`, is the script decoder's, below.
 #
 #   Read off the mutation run
 #   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
@@ -180,6 +177,37 @@ excluded-modules = []
 #     kinds `_solved` answers that sort after it are
 #     "witness_v0_scripthash" and "witness_v1_taproot", whose 32-byte
 #     programs are never a key of `by_hash`, which holds 20-byte hashes.
+# - the reading of an expression back from its text and from its script
+#   in miniscript.py -- `_read_wrappers` of the parser, and the script
+#   decoder behind `from_script` and `reads_back` -- read off the
+#   mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41).
+#   tests/descriptors/script_decoder_test.py kills the survivors that
+#   change an answer: `_decomposed`'s push-prefix width and its bound at
+#   OP_PUSHDATA4, `_Decoder._key`'s count of the op codes a `pk_h()`
+#   needs, `_combinator`'s test for OP_ENDIF, `_thresh_end`'s slice of
+#   its branches, and the type check in `decode`'s loop, which names the
+#   innermost fragment without a type. These operators are equivalent:
+#   - `_op`'s `BYTE_FROM_OP_CODE_NAME[name][0]` turned into `[-1]`: every
+#     value of that table is one byte.
+#   - `_decomposed`'s `position + 1 < len(spans)` turned into `!=`:
+#     `position` enumerates `spans`, so `position + 1` is never above
+#     `len(spans)`.
+#   - a number of the states `_read_wrappers` and `_Decoder._expect`
+#     stack, or of the `_W_EXPR` `_thresh_branch` stacks, changed: only
+#     the states of a `thresh()` read their two numbers, and none of
+#     these is one.
+#   - `_Decoder._key`'s `self._op_code(4) == _OP_DUP` turned into `is`:
+#     an op code is an int from 0 to 255, and CPython and PyPy both
+#     answer `is` as `==` on those.
+#   - `_Decoder._multi_a`'s `self._data(offset + 1)` turned into
+#     `offset | 1`: `offset` starts at 2 and grows by 2, so it is even.
+#   - `reads_back`'s `node.script() == script` weakened to `>=`: the two
+#     differ only on a script `from_script` accepts whose node writes
+#     other bytes, sorting after it. That is the round trip `reads_back`
+#     checks, not shown here for every script: the mutant lives only
+#     while the decoder has no such defect.
 
 # one mutant at a time, in this working tree: see btclib's sig_hash.toml
 [cosmic-ray.distributor]
