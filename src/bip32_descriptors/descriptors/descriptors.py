@@ -3449,7 +3449,7 @@ _MINISCRIPT_OUTSIDE = "Miniscript expressions can only be used in wsh or tr."
 
 
 # the longest text a refusal quotes where a name belongs, too short for a
-# key: section 7 of the btclib-org standard, "A refusal carries no secret"
+# key: section 7 of the organization's standard, "A refusal carries no secret"
 _QUOTED_NAME_SIZE = 16
 
 

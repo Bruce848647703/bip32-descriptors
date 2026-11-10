@@ -123,7 +123,7 @@ to, and what counters each.
 - **Exposure of sensitive information (CWE-209).** A refusal does not
   quote the private key or the extended private key it was handed. The
   rule is section 7's *A refusal carries no secret* in the
-  [btclib-org standard](https://github.com/btclib-org/.github#a-refusal-carries-no-secret);
+  [organization's standard](https://github.com/btclib-org/.github#a-refusal-carries-no-secret);
   its helper, `assert_secret_free` in `tests/secret_free/__init__.py`, is
   called by the tests of `tests/bip32/` and `tests/descriptors/` that feed
   a secret, and reads each exception the refusal chains.
