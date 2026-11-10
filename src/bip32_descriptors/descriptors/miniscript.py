@@ -1178,9 +1178,9 @@ class Miniscript:
         names only the library's own.
 
         The fragment, the keys, the digest and the number each have their
-        type asserted just before their value is checked, the keys only as
-        a tuple: a field of another type leaves as a `BTClibTypeError`
-        naming the field and the type alone.
+        type asserted just before their value is checked, the keys as a
+        tuple and each key as a `KeyExpression`: a field of another type
+        leaves as a `BTClibTypeError` naming the field and the type alone.
         """
         assert_type(self.context, str, "context")
         if self.context not in (P2WSH, TAPSCRIPT):
@@ -1224,6 +1224,8 @@ class Miniscript:
         group does not make (BIP327).
         """
         assert_type(self.keys, tuple, "keys")
+        for key in self.keys:
+            assert_type(key, KeyExpression, "key")
         fragment = self.fragment
         keys = len(self.keys)
         if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != (

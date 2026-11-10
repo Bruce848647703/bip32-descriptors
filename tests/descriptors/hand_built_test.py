@@ -6,18 +6,19 @@
 
 A field of the wrong type, in every `Descriptor` fragment and in a
 `MultiA`, leaves as a `BTClibTypeError`, and so does a `Miniscript`
-node's fragment, threshold or digest of the wrong type, or its keys
-given as no tuple. `TrDescriptor`, `MiniscriptDescriptor`,
-`UnusedDescriptor`, `ShDescriptor`, `WshDescriptor` and `MultiA` also
-refuse a value `parse` refuses, as a `BTClibValueError`, and every
-fragment holding a key that `parse` reads outside ``tr()`` and
-``rawtr()``, and a P2WSH `Miniscript` node, refuses a ``musig()`` one
-and an x-only one. Issues btclib-org/bip32-descriptors#46,
-btclib-org/bip32-descriptors#85, btclib-org/bip32-descriptors#103,
-btclib-org/bip32-descriptors#119, btclib-org/bip32-descriptors#134,
-btclib-org/bip32-descriptors#141, btclib-org/bip32-descriptors#150,
-btclib-org/bip32-descriptors#158, btclib-org/bip32-descriptors#159 and
-btclib-org/bip32-descriptors#161.
+node's fragment, threshold or digest of the wrong type, its keys given
+as no tuple, or a key that is no `KeyExpression`. `TrDescriptor`,
+`MiniscriptDescriptor`, `UnusedDescriptor`, `ShDescriptor`,
+`WshDescriptor` and `MultiA` also refuse a value `parse` refuses, as a
+`BTClibValueError`, and every fragment holding a key that `parse` reads
+outside ``tr()`` and ``rawtr()``, and a P2WSH `Miniscript` node, refuses
+a ``musig()`` one and an x-only one. Issues
+btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
+btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
+btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#141,
+btclib-org/bip32-descriptors#150, btclib-org/bip32-descriptors#158,
+btclib-org/bip32-descriptors#159, btclib-org/bip32-descriptors#161 and
+btclib-org/bip32-descriptors#170.
 
 `KeyExpression` refuses a `pub_key` that `parse` refuses, an x-only key
 with no `pub_key`, a `pub_key` beside another key or a derivation, and a
@@ -281,6 +282,37 @@ def test_a_wsh_miniscript_holding_what_is_no_node_is_refused() -> None:
     ) as e:
         MiniscriptDescriptor(node)
     assert_secret_free(e.value, [_RANDOM_HEX])
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "None"])
+@pytest.mark.parametrize(
+    "context",
+    [miniscript.P2WSH, miniscript.TAPSCRIPT],
+    ids=["p2wsh", "tapscript"],
+)
+def test_a_miniscript_holding_a_key_of_another_type_is_refused(
+    key: object, context: str
+) -> None:
+    """Each key is a KeyExpression, in any context.
+
+    Issue btclib-org/bip32-descriptors#170.
+    """
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        miniscript.Miniscript(
+            "pk_k",
+            context,
+            keys=(key,),  # type: ignore[arg-type]
+        )
+    (valid_key,) = parse(f"pk({_C})").key_expressions
+    fragment = "multi" if context == miniscript.P2WSH else "multi_a"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        miniscript.Miniscript(
+            fragment,
+            context,
+            keys=(valid_key, key),  # type: ignore[arg-type]
+            threshold=1,
+        )
 
 
 @pytest.mark.parametrize(
