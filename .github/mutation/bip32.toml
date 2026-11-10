@@ -289,6 +289,31 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 #   ints CPython keeps one object of.
 # - `parse`'s `len(key_bin) != _REQUIRED_LENGTH` weakened to `<`:
 #   `stream.read(_REQUIRED_LENGTH)` never returns more.
+#
+# `bip32.py` from the same run, its second part: the root key from a
+# seed and the reads of one half of a key from the other --
+# `_xpub_from_xprv`, `xpub_from_xprv`, `prv_keyinfo_from_xprv` and
+# `point_from_xpub` -- each survivor again run against the whole suite,
+# which kills none of them outside tests/bip32.
+# `prv_keyinfo_from_xprv`'s `key[:1]` widened to `key[:2]` in its "not a
+# private key" refusal, and `point_from_xpub`'s `ec != ec2` turned into
+# `is not`, die in tests/bip32/bip32_test.py: the first is now compared
+# whole, the second given a copy of secp256k1, an equal curve that is
+# another object. These operators are equivalent, where the paragraphs
+# above have not named them:
+#
+# - `_xpub_from_xprv`'s and `prv_keyinfo_from_xprv`'s `key[0] != 0`
+#   weakened to `> 0`: a byte is never below zero.
+# - `prv_keyinfo_from_xprv`'s `key[1:]` widened to `key[0:]`, for the
+#   reason the four reads above are: its `key[0] != 0` guard has
+#   confirmed that byte is zero.
+# - `_xpub_from_xprv`'s `check_validity=False` turned into `True`: every
+#   caller hands it a key that has been validated, by
+#   `key_data_from_bip32_key` or by the `_derive` of one, and the
+#   neutered key of a valid xprv is valid, so the check passes.
+# - `xpub_from_xprv`'s `b58encode(check_validity=False)` turned into
+#   `True`: `xpub_from_xprv_` has validated the key it answers, so the
+#   second check passes too.
 
 [cosmic-ray.distributor]
 name = "local"

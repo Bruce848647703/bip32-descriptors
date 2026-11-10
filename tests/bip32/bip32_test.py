@@ -4,6 +4,7 @@
 
 """Tests for the `bip32_descriptors.bip32` module."""
 
+import copy
 import hmac
 import re
 import string
@@ -107,6 +108,9 @@ def test_the_three_key_reads_answer_for_one_half_each() -> None:
     assert pub_keyinfo_from_xpub(xpub) == pub_keyinfo_from_xkey(xpub)
     assert pub_keyinfo_from_xkey(xprv) == pub_keyinfo_from_xkey(xpub)
     assert point_from_xpub(xpub) == mult(q)
+    # the curve the version names is compared by value: a copy of
+    # secp256k1 is not the same object, and is the same curve
+    assert point_from_xpub(xpub, copy.deepcopy(ec)) == mult(q)
 
     # a BIP32 key is always compressed, so uncompressed is another format
     err_msg = "uncompressed SEC / compressed BIP32 mismatch"
@@ -138,9 +142,12 @@ def test_the_three_key_reads_answer_for_one_half_each() -> None:
         with pytest.raises(BTClibValueError) as excinfo:
             read(xprv)
         assert str(excinfo.value) == "not a public key: prefix 0x00"
-    # and the private read refuses the public half by its prefix
-    with pytest.raises(BTClibValueError, match="not a private key: prefix 0x0[23]"):
+    # and the private read refuses the public half by its prefix, the
+    # message compared whole for the same reason
+    prefix = BIP32KeyData.b58decode(xpub).key[:1].hex()
+    with pytest.raises(BTClibValueError) as excinfo:
         prv_keyinfo_from_xprv(xpub)
+    assert str(excinfo.value) == f"not a private key: prefix 0x{prefix}"
 
 
 def test_exceptions() -> None:
