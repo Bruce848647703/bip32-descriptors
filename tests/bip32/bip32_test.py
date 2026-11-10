@@ -550,6 +550,33 @@ def test_public_derivation_builds_no_point(
     assert child.key == bytes_from_point(point_from_octets_var(uncompressed))
 
 
+def test_the_working_copy_prints_no_key_material() -> None:
+    """`_BIP32KeyData`'s repr is the default object one, naming no field.
+
+    The struct holds a private key and its scalar and has no masking repr
+    of its own, so a generated one would print both.
+    """
+    xprv = BIP32KeyData.b58decode(
+        "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi"
+    )
+    q = int.from_bytes(xprv.key[1:], "big")
+    working = _BIP32KeyData(
+        version=xprv.version,
+        depth=xprv.depth,
+        parent_fingerprint=xprv.parent_fingerprint,
+        index=xprv.index,
+        chain_code=xprv.chain_code,
+        key=xprv.key,
+        prv_key_int=q,
+    )
+    text = repr(working)
+    assert text == object.__repr__(working)
+    # what a generated repr would print: the scalar in decimal and the
+    # two byte strings as their reprs
+    for secret in (str(q), repr(xprv.key), repr(xprv.chain_code)):
+        assert secret not in text
+
+
 def test_private_functions_do_not_validate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -586,6 +613,33 @@ def test_private_functions_do_not_validate(
     validations = 0
     derive(xpub_data, "m/0/1")
     assert validations == 2
+
+
+def test_a_range_validates_the_account_and_each_key_it_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`derive_from_account_range_` checks its input once and each output.
+
+    The rule `test_private_functions_do_not_validate` holds `derive` to:
+    the account key on reading it, and every key handed back, the branch
+    key walked to on the way being no answer.
+    """
+    root = rootxprv_from_seed_(b"\x01" * 16)
+    account = xpub_from_xprv_(derive_(root, "m/44h/0h/0h"))
+    validated: list[BIP32KeyData] = []
+    real = BIP32KeyData.assert_valid
+
+    def recording(self: BIP32KeyData) -> None:
+        validated.append(self)
+        real(self)
+
+    monkeypatch.setattr(BIP32KeyData, "assert_valid", recording)
+    keys = derive_from_account_range_(account, 0, [0, 1, 2])
+    # the account itself first, then each key answered, in order and by
+    # identity: a count alone would also pass the account validated again
+    assert len(validated) == 1 + len(keys)
+    assert validated[0] is account
+    assert all(v is k for v, k in zip(validated[1:], keys, strict=True))
 
 
 def test_derive_validates_before_it_changes_the_depth() -> None:
@@ -753,6 +807,12 @@ def test_derive_from_account() -> None:
     # 65536 or narrowed to 65534 would move the boundary this vector
     # relies on being exactly 65535
     assert derive_from_account(mxpub, 0, 0xFFFF)
+    # and derive_from_account_'s own default, the same boundary
+    assert derive_from_account_(mxpub, 0, 0xFFFF).index == 0xFFFF
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_(mxpub, 0, 0xFFFF + 1)
+    # a branch at max_index itself is no higher than it
+    assert derive_from_account(mxpub, 0xFFFF, 0, branches_0_1_only=False)
 
     # strictly above the offset, not only at it: `>= HARDENED_OFFSET`
     # weakened to `==` would refuse only the exact boundary above, the
@@ -810,6 +870,13 @@ def test_crack() -> None:
     err_msg = "not a parent's child: wrong parent fingerprint"
     with pytest.raises(BTClibValueError, match=err_msg):
         crack_prv_key(child_xpub, grandchild_xprv)
+    # a wrong fingerprint above the parent's as well as below it: `!=`
+    # weakened to `<` would take the one above for the parent's
+    child = BIP32KeyData.b58decode(child_xprv)
+    for wrong in (b"\x00" * 4, b"\xff" * 4):
+        assert wrong != child.parent_fingerprint
+        with pytest.raises(BTClibValueError, match=err_msg):
+            crack_prv_key(parent_xpub, replace(child, parent_fingerprint=wrong))
 
     hardened_child_xprv = derive(parent_xprv, 0x80000000)
     with pytest.raises(BTClibValueError, match="hardened child derivation"):
@@ -1830,6 +1897,19 @@ def test_derive_from_account_range_refuses_before_it_walks() -> None:
     err_msg = "invalid address index: 65536"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(mxpub, 0, [0, 1, 0xFFFF + 1])
+
+    # the text spelling carries defaults of its own, held to the same
+    # branches and the same bound: max_index's top accepted, one past it
+    # refused
+    with pytest.raises(BTClibValueError, match="invalid branch number: 2"):
+        derive_from_account_range(mxpub, 2, [0])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_range(mxpub, 0, [0xFFFF + 1])
+    top = [derive_from_account(mxpub, 0, 0xFFFF)]
+    assert derive_from_account_range(mxpub, 0, [0xFFFF]) == top
+    assert derive_from_account_range_(mxpub, 0, [0xFFFF]) == [
+        derive_from_account_(mxpub, 0, 0xFFFF)
+    ]
 
     err_msg = "unhardened account/master key"
     with pytest.raises(BTClibValueError, match=err_msg):

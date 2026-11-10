@@ -314,6 +314,45 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 # - `xpub_from_xprv`'s `b58encode(check_validity=False)` turned into
 #   `True`: `xpub_from_xprv_` has validated the key it answers, so the
 #   second check passes too.
+#
+# `bip32.py` from the same run, its last part: the derivations -- the
+# working copy `_BIP32KeyData`, the public step, the account and range
+# spellings -- and `crack_prv_key`, each survivor again run against the
+# whole suite. `_assert_valid_branch`'s `branch > max_index` weakened to
+# `>=` dies there, in tests/integer_policy_test.py, and now in
+# tests/bip32 too. These die in tests/bip32/bip32_test.py:
+# `_BIP32KeyData`'s `@dataclass(repr=False)` turned into `repr=True`,
+# which would print the key and its scalar; the `max_index` default of
+# `derive_from_account_`, `derive_from_account_range_` and
+# `derive_from_account_range` moved by one, and the last one's
+# `branches_0_1_only` default turned into `False`;
+# `derive_from_account_range_`'s loop of output checks replaced with one
+# over nothing, which a count of `assert_valid` calls sees; and
+# `crack_prv_key`'s `parent_fingerprint != ...` weakened to `<`, which a
+# wrong fingerprint above the parent's tells apart. These operators are
+# equivalent, where the paragraphs above have not named them:
+#
+# - `_BIP32KeyData.is_private`'s and `crack_prv_key`'s `key[0] == 0` and
+#   `!= 0` weakened to `<=` and `>`: a byte is never below zero.
+# - `_derive`'s `key[1:]` widened to `key[0:]`, behind `is_private`, for
+#   the reason the four reads above are; and its `else 0`, the scalar of
+#   a public key, turned into 1 or -1: only the private derivation
+#   reads the scalar, and it runs only for a private key.
+# - `_pub_key_offset`'s and `crack_prv_key`'s `index.to_bytes(4, ...,
+#   signed=False)` turned into `signed=True`: each is reached only past
+#   a refusal of a hardened index, and below 2**31 both write the same
+#   four bytes.
+# - `pub_key_derivation_tweaks`' `secp256k1.p_size + 1` turned into `|`
+#   or `^`: `p_size` is 32, and all three give 33.
+# - `crack_prv_key`'s `c.depth != p.depth + 1` turned into `is not`: a
+#   depth is at most 255, and the ints up to 256 are ones CPython keeps
+#   one object of.
+# - `derive_from_account_range`'s and `derive_from_account`'s
+#   `b58encode(check_validity=False)` turned into `True`: the underscore
+#   spelling each calls has validated the keys it answers.
+# - `crack_prv_key`'s `check_validity=False` turned into `True`: the
+#   `b58encode()` after it makes the same `assert_valid` on the same key,
+#   so the check moves and refuses nothing more.
 
 [cosmic-ray.distributor]
 name = "local"
