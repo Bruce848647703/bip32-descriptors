@@ -280,7 +280,7 @@ def _assert_valid_context(context: str) -> None:
     """
     assert_type(context, str, "context")
     if context not in {P2WSH, TAPSCRIPT}:
-        err_msg = f"unknown spend context: '{context}'"
+        err_msg = "unknown spend context"
         err_msg += f"; it must be one of {sorted((P2WSH, TAPSCRIPT))}"
         raise BTClibValueError(err_msg)
 

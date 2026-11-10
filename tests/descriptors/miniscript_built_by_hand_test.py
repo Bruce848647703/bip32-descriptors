@@ -7,7 +7,8 @@
 A context the library does not define, a fragment it does not know, and
 a subexpression whose context is not the node's. The first two are any
 value a caller passes, so the refusal names none of it. Issues
-btclib-org/bip32-descriptors#120 and btclib-org/bip32-descriptors#130.
+btclib-org/bip32-descriptors#120, btclib-org/bip32-descriptors#130 and
+btclib-org/bip32-descriptors#133.
 """
 
 from __future__ import annotations
@@ -53,11 +54,18 @@ def test_an_unknown_fragment_is_refused_without_its_text(unknown: str) -> None:
 
 @pytest.mark.parametrize("context", [_WIF, _RANDOM_HEX])
 def test_an_unknown_context_is_refused_without_its_text(context: str) -> None:
-    """Unrefused, every rule would read it as the p2wsh context."""
+    """Unrefused, every rule would read it as the p2wsh context.
+
+    Issues btclib-org/bip32-descriptors#120 and
+    btclib-org/bip32-descriptors#133.
+    """
     node = parse_miniscript("1", TAPSCRIPT)
     err_msg = r"^unknown spend context; it must be one of \['P2WSH', 'tapscript'\]$"
     with pytest.raises(BTClibValueError, match=err_msg) as e:
         replace(node, context=context)
+    assert_secret_free(e.value, [context])
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        parse_miniscript("1", context)
     assert_secret_free(e.value, [context])
 
 
