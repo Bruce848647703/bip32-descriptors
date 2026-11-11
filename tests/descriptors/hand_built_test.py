@@ -103,6 +103,13 @@ btclib-org/bip32-descriptors#261.
 one inside a ``wsh()`` argument, refuse an unpickled ``multi()`` whose
 keys are no tuple as `MultiDescriptor` refuses it, before its function
 and its other checks. Issue btclib-org/bip32-descriptors#264.
+
+`WshDescriptor`, and `ShDescriptor` for a ``wsh()`` argument, refuse an
+unpickled `MiniscriptDescriptor` whose text `parse` reads as a
+descriptor function, or that is not sane, with `MiniscriptDescriptor`'s
+message, once its nodes and keys pass. They do not ask again the sanity
+of one `parse` or `infer_descriptor` has read. Issue
+btclib-org/bip32-descriptors#267.
 """
 
 from __future__ import annotations
@@ -3041,3 +3048,142 @@ def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
     other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
     with pytest.raises(BTClibTypeError, match=err_msg):
         TrDescriptor(_KEY, (leaf, other) if beside else leaf)
+
+
+def _unpickled_miniscript(expression: str) -> MiniscriptDescriptor:
+    """Return a `MiniscriptDescriptor` of the P2WSH EXPRESSION, unpickled.
+
+    `MiniscriptDescriptor` refuses a node `parse` does not read back as
+    itself when built, and unpickling skips that check, so the node is
+    given to an unpickled copy.
+    """
+    inner = cast("WshDescriptor", _MINISCRIPT).inner
+    ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
+    object.__setattr__(ms, "node", _unpickled(miniscript.parse(expression)))
+    return ms
+
+
+# miniscripts `parse` does not read back as themselves: not sane, or read
+# as a descriptor function
+_NOT_READ_BACK = {
+    "repeated-key": f"and_v(v:pk({_C}),pk({_C}))",
+    "timelock-mix": f"and_v(v:pk({_C}),and_v(v:older(1),older(4194305)))",
+    "resource-limits": "and_v(v:older(1)," * 101 + f"pk({_C})" + ")" * 101,
+    "read-as-pk": f"pk({_C})",
+    "read-as-pkh": f"pkh({_C})",
+    "read-as-multi": f"multi(1,{_C},{_C2})",
+}
+
+
+@pytest.mark.parametrize(
+    "expression", _NOT_READ_BACK.values(), ids=list(_NOT_READ_BACK)
+)
+def test_an_unpickled_miniscript_parse_does_not_read_back_is_refused_inside_wsh(
+    expression: str,
+) -> None:
+    """In ``wsh()`` and ``sh(wsh())``, with `MiniscriptDescriptor`'s message.
+
+    Directly or by `replace`. Issue btclib-org/bip32-descriptors#267.
+    """
+    with pytest.raises(BTClibValueError) as bare:
+        MiniscriptDescriptor(miniscript.parse(expression))
+    err_msg = f"^{re.escape(str(bare.value))}$"
+    inner = _unpickled_miniscript(expression)
+    wsh = cast("WshDescriptor", _PARSED[WshDescriptor])
+    sh = cast("ShDescriptor", _PARSED[ShDescriptor])
+    builds: list[Callable[[], object]] = [
+        lambda: WshDescriptor(inner),
+        lambda: replace(wsh, inner=inner),
+        lambda: ShDescriptor(_unpickled_wsh(inner)),
+        lambda: replace(sh, inner=_unpickled_wsh(inner)),
+    ]
+    for build in builds:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            build()
+
+
+def _first_key_node(root: miniscript.Miniscript) -> miniscript.Miniscript:
+    """Return the first node of `root`'s text that holds a key."""
+    stack = [root]
+    while not stack[-1].keys:
+        node = stack.pop()
+        stack += reversed(node.subs)
+    return stack[-1]
+
+
+# a field given to the first node holding a key, and the refusal of
+# `_assert_wsh_argument` before it writes the text, with that node's
+# fragment for {}
+_BEFORE_THE_TEXT: dict[str, tuple[str, object, type[Exception], str]] = {
+    "no-key": ("keys", (), BTClibValueError, "invalid number of keys in {}: 0"),
+    "list-fragment": (
+        "fragment",
+        ["pk_k"],
+        BTClibTypeError,
+        "invalid fragment type: list",
+    ),
+    "tapscript-context": (
+        "context",
+        _TAPSCRIPT,
+        BTClibValueError,
+        "not a P2WSH node: {} in tapscript",
+    ),
+    "str-key": ("keys", ("not a key",), BTClibTypeError, "invalid key type: str"),
+    "x-only-key": ("keys", _X_KEYS[:1], BTClibValueError, f"key 0: {_X_ONLY_HERE}"),
+    "uncompressed-key": (
+        "keys",
+        (_U_KEY,),
+        BTClibValueError,
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+}
+
+
+@pytest.mark.parametrize("wrapped", ["wsh", "sh-wsh"])
+@pytest.mark.parametrize("fault", _BEFORE_THE_TEXT)
+@pytest.mark.parametrize(
+    "expression", _NOT_READ_BACK.values(), ids=list(_NOT_READ_BACK)
+)
+def test_an_unpickled_miniscript_is_refused_for_its_nodes_and_keys_first(
+    expression: str, fault: str, wrapped: str
+) -> None:
+    """Before its text is read, as one `parse` reads back is refused.
+
+    Issue btclib-org/bip32-descriptors#267.
+    """
+    name, value, error, refusal = _BEFORE_THE_TEXT[fault]
+    inner = _unpickled_miniscript(expression)
+    node = _first_key_node(inner.node)
+    err_msg = f"^{re.escape(refusal.format(node.fragment))}$"
+    object.__setattr__(node, name, value)
+    with pytest.raises(error, match=err_msg):
+        if wrapped == "wsh":
+            WshDescriptor(inner)
+        else:
+            ShDescriptor(_unpickled_wsh(inner))
+
+
+def test_a_parsed_or_inferred_wsh_miniscript_is_checked_for_sanity_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither ``wsh()`` nor ``sh()`` asks again what was asked as it was read.
+
+    By `parse`, which asks with its own check, or by `infer_descriptor`,
+    which asks once, building the `MiniscriptDescriptor`. The control
+    beside them: one built by hand is asked once by `MiniscriptDescriptor`
+    and once more by each wrapper. Issue btclib-org/bip32-descriptors#267.
+    """
+    expression = f"and_v(v:pk({_C}),pk({_C2}))"
+    wsh = parse(f"wsh({expression})")
+    sh = parse(f"sh(wsh({expression}))")
+    asked: list[miniscript.Miniscript] = []
+    monkeypatch.setattr(descriptors_module, "_assert_sane_script", asked.append)
+    parse(f"wsh({expression})")
+    parse(f"sh(wsh({expression}))")
+    assert not asked
+    for parsed in (wsh, sh):
+        infer_descriptor(parsed.script_pub_key().script, parsed.provider())
+        assert len(asked) == 1
+        asked.clear()
+    ShDescriptor(WshDescriptor(MiniscriptDescriptor(miniscript.parse(expression))))
+    assert len(asked) == 3
