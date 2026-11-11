@@ -1139,6 +1139,63 @@ def _computed_witness(node: Miniscript) -> _Bounds:
     return _binary_witness(node)
 
 
+# the fields of `Miniscript` its build computes, in the order of `_derived`
+_DERIVED = ("properties", "script_size", "_static_ops", "_ops", "_stack", "_witness")
+
+
+def _derived(node: Miniscript) -> tuple[object, ...]:
+    """Return the fields of `_DERIVED`, computed for the node.
+
+    From its own fields and the derived fields its subexpressions hold.
+    """
+    static, ops = _computed_ops(node)
+    return (
+        _computed_properties(node),
+        _computed_script_size(node),
+        static,
+        ops,
+        _computed_stack(node),
+        _computed_witness(node),
+    )
+
+
+def _assert_derived(root: Miniscript) -> None:
+    """Refuse a tree a node of which holds fields its build did not compute.
+
+    `Miniscript` computes its type properties, its script size and its
+    bounds when a node is built, and unpickling copies them from the
+    stream instead, so an unpickled node can hold a type its
+    subexpressions do not give it. Each node is asked after its
+    subexpressions, so that what it is computed from has been asked
+    already, and is refused first for its fragment, its arity and its
+    number as its build refuses them, without which nothing can be
+    computed.
+
+    A tree holding a node of a number of keys its fragment does not take
+    is not asked: no `Miniscript` holds one, so there is no build to
+    compare it with. The caller has checked the type of every node, its
+    context, and the types of its fragment and its keys.
+    """
+    nodes: list[Miniscript] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        nodes.append(node)
+        stack += node.subs
+    for node in nodes:
+        try:
+            _assert_key_number(node.fragment, len(node.keys))
+        except BTClibValueError:
+            return
+    for node in reversed(nodes):
+        node._assert_arity()
+        node._assert_number()
+        if _derived(node) != tuple(getattr(node, name) for name in _DERIVED):
+            fragment = node.fragment
+            err_msg = f"{fragment} holds a type or bounds its build does not compute"
+            raise BTClibValueError(err_msg)
+
+
 @dataclass(frozen=True)
 class Miniscript:
     """A miniscript expression: a fragment, its arguments, its own type.
@@ -1180,15 +1237,7 @@ class Miniscript:
     def __post_init__(self) -> None:
         """Check the shape of the node, then compute what it determines."""
         self._assert_shape()
-        static, ops = _computed_ops(self)
-        for name, value in (
-            ("properties", _computed_properties(self)),
-            ("script_size", _computed_script_size(self)),
-            ("_static_ops", static),
-            ("_ops", ops),
-            ("_stack", _computed_stack(self)),
-            ("_witness", _computed_witness(self)),
-        ):
+        for name, value in zip(_DERIVED, _derived(self), strict=True):
             object.__setattr__(self, name, value)
 
     def _assert_shape(self) -> None:
@@ -1215,19 +1264,8 @@ class Miniscript:
             err_msg = "unknown spend context"
             err_msg += f"; it must be one of {sorted((P2WSH, TAPSCRIPT))}"
             raise BTClibValueError(err_msg)
+        self._assert_arity()
         fragment = self.fragment
-        _assert_fragment_type(fragment)
-        if fragment == "thresh":
-            if not self.subs:
-                raise BTClibValueError("thresh() takes at least one subexpression")
-        elif fragment not in _ARITY:
-            raise BTClibValueError("unknown miniscript fragment")
-        elif len(self.subs) != _ARITY[fragment]:
-            err_msg = (
-                f"{fragment} takes {_ARITY[fragment]} subexpressions, "
-                f"{len(self.subs)} given"
-            )
-            raise BTClibValueError(err_msg)
         # each node writes its keys in its own context, so a subexpression
         # of the other one would put keys of the wrong size in the script
         if any(sub.context != self.context for sub in self.subs):
@@ -1242,6 +1280,26 @@ class Miniscript:
             )
             raise BTClibValueError(err_msg)
         self._assert_number()
+
+    def _assert_arity(self) -> None:
+        """Refuse a fragment the library does not define, and its arity.
+
+        The fragment's type is asserted first, as `_assert_fragment_type`
+        says.
+        """
+        fragment = self.fragment
+        _assert_fragment_type(fragment)
+        if fragment == "thresh":
+            if not self.subs:
+                raise BTClibValueError("thresh() takes at least one subexpression")
+        elif fragment not in _ARITY:
+            raise BTClibValueError("unknown miniscript fragment")
+        elif len(self.subs) != _ARITY[fragment]:
+            err_msg = (
+                f"{fragment} takes {_ARITY[fragment]} subexpressions, "
+                f"{len(self.subs)} given"
+            )
+            raise BTClibValueError(err_msg)
 
     def _assert_keys(self) -> None:
         """Refuse the keys no fragment holds, and the ones a context forbids.

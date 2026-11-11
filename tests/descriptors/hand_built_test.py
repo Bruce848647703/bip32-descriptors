@@ -123,6 +123,11 @@ btclib-org/bip32-descriptors#269.
 a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
 ``rawpkh()`` whose key hash, is no bytes first, as its own build refuses
 it. Issue btclib-org/bip32-descriptors#271.
+
+`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor` and
+`ShDescriptor` refuse an unpickled node whose type and bounds are not
+those its build computes from its subexpressions, before its sanity is
+asked. Issue btclib-org/bip32-descriptors#286.
 """
 
 from __future__ import annotations
@@ -3577,3 +3582,62 @@ def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
         inner = _unpickled_wsh(inner)
     with pytest.raises(BTClibTypeError, match=err_msg):
         (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
+
+
+def _forged_and_v(context: str, *, forged: bool) -> miniscript.Miniscript:
+    """Return an unpickled ``and_v(v:pk(KEY),pk(KEY))`` of the context.
+
+    Where `forged`, its first subexpression is an ``older(2)``, which is B
+    and not V, and the ``and_v`` keeps the type, size and bounds it was
+    built with, as unpickling copies them.
+    """
+    first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
+    expression = f"and_v(v:pk({first}),pk({second}))"
+    root = _unpickled(miniscript.parse(expression, context))
+    if forged:
+        older = miniscript.parse("older(2)", context)
+        object.__setattr__(root, "subs", (older, root.subs[1]))
+    return root
+
+
+def _wrapped_forged_and_v(wrapped: str, *, forged: bool) -> Descriptor:
+    """Return the descriptor `_WRAPPED` names, of `_forged_and_v`'s node.
+
+    A ``wsh()`` holds an unpickled `MiniscriptDescriptor`, and an
+    ``sh()`` an unpickled ``wsh()`` of one, so that only the outermost
+    build asks the node.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _forged_and_v(context, forged=forged)
+    if wrapped in {"tr", "bare"}:
+        return wrap(root)
+    parsed = cast("WshDescriptor", _MINISCRIPT).inner
+    inner: MiniscriptDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(inner, "node", root)
+    if wrapped == "wsh":
+        return WshDescriptor(inner)
+    return ShDescriptor(_unpickled_wsh(inner))
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_its_subexpressions_do_not_type_is_refused(
+    wrapped: str,
+) -> None:
+    """For the type and bounds it holds, which its build does not compute.
+
+    `parse` refuses its text as ill-typed. The control: the node before
+    its subexpression is replaced builds, unpickled as it is. Issue
+    btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    built = _wrapped_forged_and_v(wrapped, forged=False)
+    if wrapped != "bare":
+        assert parse(str(built)) == built
+        root = _forged_and_v(context, forged=True)
+        with pytest.raises(
+            BTClibValueError, match="^ill-typed miniscript: and_v over "
+        ):
+            parse(_TEMPLATES[wrapped].format(root))
+    err_msg = "^and_v holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _wrapped_forged_and_v(wrapped, forged=True)

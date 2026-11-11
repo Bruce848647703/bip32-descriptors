@@ -245,6 +245,7 @@ from bip32_descriptors.descriptors.miniscript import (
     Miniscript,
     Preimages,
     SpendContext,
+    _assert_derived,
     _assert_fragment_type,
     _assert_key_number,
     _assert_sane,
@@ -889,7 +890,9 @@ def _assert_tree(tree: DescriptorTree) -> None:
     says. It is then refused where `parse` reads its text as a function,
     such as ``pk()`` or ``multi_a()``, or would refuse it without
     `prv_keys`: either way the descriptor would not parse back from its
-    text.
+    text. Before its sanity is asked, it is refused where a node holds a
+    type or bounds its build does not compute, as `_assert_derived` says,
+    since the sanity check reads them.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -921,6 +924,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
             err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
             raise BTClibValueError(err_msg)
         if not _SANE_BY_PARSE.get():
+            _assert_derived(leaf)
             _assert_sane_script(leaf)
 
 
@@ -1919,9 +1923,10 @@ class WshDescriptor(Descriptor):
     check, and its text need not be written without raising.
 
     Once those pass, a miniscript argument whose text `parse` reads as a
-    descriptor function, such as ``pk()``, and then one that is not sane,
-    is refused with `MiniscriptDescriptor`'s message: an unpickled one
-    skips that check of its own too.
+    descriptor function, such as ``pk()``, then one a node of which holds
+    a type or bounds its build does not compute, and then one that is not
+    sane, is refused with `MiniscriptDescriptor`'s message: an unpickled
+    one skips that check of its own too.
 
     An unpickled ``multi()`` argument skips its own check. A field of
     the wrong type is refused first, as `_assert_multi_types` says, and
@@ -2041,14 +2046,18 @@ def _assert_miniscript_read(node: Miniscript) -> None:
 
     One whose text `parse` reads as a descriptor function, such as
     ``pk()``, and one `parse` refuses where not sane, unless its sanity
-    was asked already, as `_SANE_BY_PARSE` says. The last two checks of
-    `MiniscriptDescriptor`; `WshDescriptor` says when ``wsh()`` runs them.
+    was asked already, as `_SANE_BY_PARSE` says. Before its sanity is
+    asked, one a node of which holds a type or bounds its build does not
+    compute, as `_assert_derived` says, since the sanity check reads them.
+    The last checks of `MiniscriptDescriptor`; `WshDescriptor` says when
+    ``wsh()`` runs them.
     """
     name = _function_read(str(node))
     if name is not None:
         err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
         raise BTClibValueError(err_msg)
     if not _SANE_BY_PARSE.get():
+        _assert_derived(node)
         _assert_sane_script(node)
 
 
@@ -2083,6 +2092,13 @@ class MiniscriptDescriptor(Descriptor):
     and the node's text can be written: the node is then left to the
     text and sanity checks above, and the key to ``wsh()``, which refuses
     it by its position.
+
+    A node holding a type or bounds its build does not compute, as an
+    unpickled one can, is refused before the sanity check reads them, and
+    so is one of a fragment the library does not define, or of a number
+    of subexpressions or a threshold its fragment does not take. A
+    miniscript holding a node left as the paragraph above says is not
+    asked.
 
     `parse` takes one only inside ``wsh()``. The refusal of a top-level one
     is `parse`'s alone: the build cannot know whether the value will be
