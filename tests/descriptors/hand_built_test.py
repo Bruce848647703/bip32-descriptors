@@ -151,6 +151,12 @@ fragment is a `str` the library does not define, as `Miniscript` refuses
 it, before its keys, echoing no value it holds. So do `WshDescriptor`,
 and `ShDescriptor` for a ``wsh()`` argument, where the node is in an
 unpickled `MiniscriptDescriptor`. Issue btclib-org/bip32-descriptors#285.
+
+`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor`, and
+`ShDescriptor` for a ``wsh()`` argument, refuse an unpickled node whose
+subexpressions are no tuple, naming the type alone, after its context
+and fragment and before its keys, as its build refuses it. Issue
+btclib-org/bip32-descriptors#287.
 """
 
 from __future__ import annotations
@@ -528,6 +534,86 @@ def test_an_unpickled_node_holding_a_key_of_another_type_is_refused(
     object.__setattr__(node.subs[0], "keys", (key,))
     with pytest.raises(BTClibTypeError, match=err_msg):
         WshDescriptor(MiniscriptDescriptor(node))
+
+
+def _in_wsh(node: miniscript.Miniscript) -> MiniscriptDescriptor:
+    """Return an unpickled `MiniscriptDescriptor` holding the node."""
+    ms = _unpickled_miniscript(f"pk({_C})")
+    object.__setattr__(ms, "node", node)
+    return ms
+
+
+# subexpressions of types other than a tuple, which an unpickled node
+# can hold, and the spelling of each a refusal could print
+_SUBS_OF_ANOTHER_TYPE = [
+    (770907403214864877517, "770907403214864877517"),
+    (None, _RANDOM_HEX),
+    (_RANDOM_HEX, _RANDOM_HEX),
+    (bytes.fromhex(_RANDOM_HEX), bytes.fromhex(_RANDOM_HEX)),
+    ([_RANDOM_HEX], _RANDOM_HEX),
+]
+
+
+@pytest.mark.parametrize("fault", ["none", "keys", "unknown", "fragment", "context"])
+@pytest.mark.parametrize("nested", [False, True], ids=["root", "nested"])
+@pytest.mark.parametrize(
+    "subs,spelling",
+    _SUBS_OF_ANOTHER_TYPE,
+    ids=["int", "None", "str", "bytes", "list"],
+)
+def test_an_unpickled_node_whose_subexpressions_are_no_tuple_is_refused(
+    subs: object, spelling: str | bytes, nested: bool, fault: str
+) -> None:
+    """In a ``tr()`` leaf and in a P2WSH miniscript, naming the type alone.
+
+    The miniscript bare, in ``wsh()`` and in ``sh(wsh())``. After the
+    node's context, its fragment's type and whether the library defines
+    it, and before its keys, as its build refuses it. An unpickled node
+    skips `Miniscript`'s own check of its subexpressions. Issue
+    btclib-org/bip32-descriptors#287.
+    """
+    wraps: list[tuple[str, str, str, Callable[[miniscript.Miniscript], object]]] = [
+        (miniscript.TAPSCRIPT, _X, miniscript.P2WSH, lambda n: TrDescriptor(_KEY, n)),
+        (miniscript.P2WSH, _C, miniscript.TAPSCRIPT, MiniscriptDescriptor),
+        (
+            miniscript.P2WSH,
+            _C,
+            miniscript.TAPSCRIPT,
+            lambda n: WshDescriptor(_in_wsh(n)),
+        ),
+        (
+            miniscript.P2WSH,
+            _C,
+            miniscript.TAPSCRIPT,
+            lambda n: ShDescriptor(_unpickled_wsh(_in_wsh(n))),
+        ),
+    ]
+    for context, key, other, wrap in wraps:
+        error: type[Exception] = BTClibTypeError
+        err_msg = f"^invalid subs type: {type(subs).__name__}$"
+        root = _unpickled(miniscript.parse(f"and_v(v:pk({key}),older(1))", context))
+        target = root.subs[0] if nested else root
+        object.__setattr__(target, "subs", subs)
+        match fault:
+            case "keys":
+                object.__setattr__(target, "keys", ("abc",))
+            case "unknown":
+                object.__setattr__(target, "fragment", _RANDOM_HEX)
+                error = BTClibValueError
+                err_msg = "^unknown miniscript fragment$"
+            case "fragment":
+                object.__setattr__(target, "fragment", 5)
+                err_msg = "^invalid fragment type: int$"
+            case "context":
+                _with_context(target, other)
+                error = BTClibValueError
+                node = "tapscript" if context == miniscript.TAPSCRIPT else "P2WSH"
+                err_msg = f"^not a {node} node: {target.fragment} in {other}$"
+            case _:
+                assert fault == "none"
+        with pytest.raises(error, match=err_msg) as e:
+            wrap(root)
+        assert_secret_free(e.value, [spelling])
 
 
 @pytest.mark.parametrize(

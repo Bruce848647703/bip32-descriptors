@@ -1204,9 +1204,10 @@ class Miniscript:
         A fragment or a context given by hand is any value, so its refusal
         names only the library's own.
 
-        The fragment, the keys, the digest and the number each have their
-        type asserted just before their value is checked, the fragment as
-        `_assert_fragment_type` says, the keys as a tuple and each key as a
+        The fragment, the subexpressions, the keys, the digest and the
+        number each have their type asserted just before their value is
+        checked, the fragment as `_assert_fragment_type` says, the
+        subexpressions and the keys as a tuple and each key as a
         `KeyExpression`: a field of another type leaves as a
         `BTClibTypeError` naming the field and the type alone.
         """
@@ -1217,11 +1218,12 @@ class Miniscript:
             raise BTClibValueError(err_msg)
         fragment = self.fragment
         _assert_fragment_type(fragment)
+        if fragment != "thresh" and fragment not in _ARITY:
+            raise BTClibValueError("unknown miniscript fragment")
+        assert_type(self.subs, tuple, "subs")
         if fragment == "thresh":
             if not self.subs:
                 raise BTClibValueError("thresh() takes at least one subexpression")
-        elif fragment not in _ARITY:
-            raise BTClibValueError("unknown miniscript fragment")
         elif len(self.subs) != _ARITY[fragment]:
             err_msg = (
                 f"{fragment} takes {_ARITY[fragment]} subexpressions, "
