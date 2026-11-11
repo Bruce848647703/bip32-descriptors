@@ -65,9 +65,14 @@ to the descriptor's text and sanity checks; where it passes them,
 ``tr()`` and ``wsh()`` refuse that key by its position, and a bare
 `MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
 
-A `MultiDescriptor` of more than three keys builds, and as a top-level
-descriptor writes a text `parse` refuses: its docstring says why. Issue
-btclib-org/bip32-descriptors#226.
+A `MultiDescriptor` of more than three keys that ``sh()`` or ``wsh()``
+takes builds, and as a top-level descriptor writes a text `parse`
+refuses: its docstring says why. Issue btclib-org/bip32-descriptors#226.
+
+A `MultiDescriptor` that no position takes is refused when built, with
+the message `parse` gives inside ``sh()``: more than three keys, one of
+them uncompressed, whose redeem script is over the push limit of
+``sh()``. Issue btclib-org/bip32-descriptors#251.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
@@ -1421,9 +1426,9 @@ def _and_v_older(key: KeyExpression) -> MiniscriptDescriptor:
 def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
     """Return ``multi(1,KEY,...)``, unpickled.
 
-    `MultiDescriptor` refuses no key and more than 20 keys when built, and
-    unpickling skips those checks, so the keys are given to an unpickled
-    copy.
+    `MultiDescriptor` refuses no key, more than 20 keys and keys no
+    position takes when built, and unpickling skips those checks, so the
+    keys are given to an unpickled copy.
     """
     parsed = _PARSED[MultiDescriptor]
     multi: MultiDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -1573,7 +1578,7 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
     ),
     (
         ShDescriptor,
-        MultiDescriptor(1, (_U_KEY,) * 8, sort=True),
+        _unpickled_sortedmulti((_U_KEY,) * 8),
         (
             "sortedmulti() inside sh() is a 531-byte redeem script,"
             " over the 520-byte push limit"
@@ -2710,6 +2715,63 @@ def test_a_bare_multi_of_four_keys_builds_and_writes_what_parse_refuses(
         assert parse(str(wrapped)).script_pub_key() == wrapped.script_pub_key()
     raw = add_checksum(f"raw({script_pub_key.script.hex()})")
     assert infer_descriptor(script_pub_key.script, Provider()) == raw
+
+
+_U_KEYS = tuple(
+    KeyExpression(pub_key=PrvKeyData(i, compressed=False).pub.sec) for i in range(1, 21)
+)
+
+
+@pytest.mark.parametrize("sort", [False, True])
+@pytest.mark.parametrize(
+    "uncompressed,compressed",
+    [(8, 0), (20, 0), (1, 14)],
+    ids=["531-bytes", "1323-bytes", "545-bytes"],
+)
+def test_a_multi_no_position_takes_is_refused_when_built(
+    uncompressed: int, compressed: int, sort: bool
+) -> None:
+    """More than three keys, one uncompressed, too large for ``sh()``.
+
+    `parse` refuses the text bare, inside ``sh()`` and inside ``wsh()``,
+    and the build refuses the value with the message `parse` gives inside
+    ``sh()``. Issue btclib-org/bip32-descriptors#251.
+    """
+    name = "sortedmulti" if sort else "multi"
+    keys = _U_KEYS[:uncompressed] + _KEYS[:compressed]
+    text = f"{name}(1,{','.join(map(str, keys))})"
+    size = 3 + 66 * uncompressed + 34 * compressed
+    refusal = (
+        f"{name}() inside sh() is a {size}-byte redeem script,"
+        " over the 520-byte push limit"
+    )
+    for template, err_msg in (
+        ("{}", f"a bare {name}() takes at most 3 keys, {len(keys)} given"),
+        ("sh({})", refusal),
+        ("wsh({})", f"key 0: {_UNCOMPRESSED_HERE}"),
+    ):
+        with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+            parse(template.format(text))
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MultiDescriptor(1, keys, sort=sort)
+    parsed = cast("MultiDescriptor", _PARSED[MultiDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, keys=keys, sort=sort)
+
+
+@pytest.mark.parametrize(
+    "uncompressed,compressed",
+    [(4, 0), (7, 0), (1, 13), (0, 20)],
+    ids=["4-keys", "465-bytes", "511-bytes", "20-compressed-keys"],
+)
+def test_a_multi_some_position_takes_is_built(
+    uncompressed: int, compressed: int
+) -> None:
+    """The control: ``sh()`` takes the first three, ``wsh()`` the last."""
+    multi = MultiDescriptor(1, _U_KEYS[:uncompressed] + _KEYS[:compressed])
+    wrapper = ShDescriptor if uncompressed else WshDescriptor
+    assert parse(str(wrapper(multi))) == wrapper(multi)
 
 
 @pytest.mark.parametrize(

@@ -2156,9 +2156,16 @@ class MultiDescriptor(Descriptor):
     The bound of three keys on a bare ``multi()`` or ``sortedmulti()`` is
     `parse`'s alone: the build cannot know whether the value will be bare,
     and ``sh()`` and ``wsh()`` check their own bounds when they wrap it.
-    One of more than three keys builds, gives a bare multisig script, and
-    writes a text `parse` refuses. Bitcoin Core's `InferDescriptor` writes
-    such a ``multi()`` for that script too, as `infer_descriptor` says.
+    One of more than three keys that ``sh()`` or ``wsh()`` takes builds,
+    gives a bare multisig script, and writes a text `parse` refuses.
+    Bitcoin Core's `InferDescriptor` writes such a ``multi()`` for that
+    script too, as `infer_descriptor` says.
+
+    One that no position takes is refused when built, after its k, with
+    the message `parse` gives inside ``sh()``: more than three keys, one
+    of them uncompressed, whose redeem script is over the push limit of
+    ``sh()``. No bare ``multi()`` takes more than three keys and no
+    ``wsh()`` an uncompressed one, so ``sh()`` is the position left.
     """
 
     threshold: int
@@ -2180,6 +2187,10 @@ class MultiDescriptor(Descriptor):
         _assert_multi_count(name, self.keys)
         if not 1 <= self.threshold <= len(self.keys):
             raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
+        if len(self.keys) > _MAX_BARE_MULTISIG_KEYS and not all(
+            key.is_compressed for key in self.keys
+        ):
+            _assert_multi_size(name, self.keys, _P2SH)
 
     @override
     def __str__(self) -> str:
@@ -4871,9 +4882,15 @@ def _inferred(  # noqa: C901, PLR0911, PLR0912  # sourcery skip: low-code-qualit
     if kind == "multisig" and context in key_contexts:
         keys = [_inferred_key(sec, context, known) for sec in data[1:]]
         if None not in keys:
-            return MultiDescriptor(
-                data[0][0], tuple(cast("list[KeyExpression]", keys)), network=network
-            )
+            # refused for keys no position takes, as `MultiDescriptor`
+            # says: the output is then an addr() or a raw(), as for any
+            # text that does not parse back
+            with suppress(BTClibValueError):
+                return MultiDescriptor(
+                    data[0][0],
+                    tuple(cast("list[KeyExpression]", keys)),
+                    network=network,
+                )
     if kind == "scripthash" and context == _TOP and data[0] in known.scripts:
         inner = _inferred(known.scripts[data[0]], _P2SH, known, network)
         if inner is not None:

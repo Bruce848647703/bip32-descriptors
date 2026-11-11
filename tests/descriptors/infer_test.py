@@ -502,6 +502,25 @@ def test_a_sh_multisig_over_the_push_limit_is_an_address() -> None:
     assert inferred.startswith("addr(")
 
 
+@pytest.mark.parametrize("wrapped", [False, True], ids=["bare", "sh"])
+def test_a_multisig_of_keys_no_position_takes_is_a_raw_or_an_address(
+    wrapped: bool,
+) -> None:
+    """Core infers a ``multi()`` or a ``sh(multi())``, which `parse` refuses.
+
+    Eight uncompressed keys, which `MultiDescriptor` refuses when built.
+    """
+    keys = [PrvKeyData(prv_key, compressed=False).pub.sec for prv_key in range(1, 9)]
+    inner = serialize(["OP_1", *keys, "OP_8", "OP_CHECKMULTISIG"])
+    script = b"\xa9\x14" + hash160(inner) + b"\x87" if wrapped else inner
+    inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
+    if wrapped:
+        assert inferred == _addr(script)
+        assert inferred.startswith("addr(")
+    else:
+        assert inferred == add_checksum(f"raw({inner.hex()})")
+
+
 def test_a_miniscript_core_refuses_is_no_miniscript() -> None:
     """One that is not sane, and one holding a key that is no key."""
     not_sane = bytes.fromhex("5ab2")
