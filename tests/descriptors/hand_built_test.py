@@ -106,9 +106,9 @@ btclib-org/bip32-descriptors#261.
 
 `WshDescriptor`, and `ShDescriptor` for a ``multi()`` argument and for
 one inside a ``wsh()`` argument, refuse an unpickled ``multi()`` holding
-a field of the wrong type first, as `MultiDescriptor` refuses it and
-before its function, and one whose threshold is out of range, where
-its text can be written, in `parse`'s order and with its message. Issues
+a field of the wrong type, as `MultiDescriptor` refuses it and before
+its function, and one whose threshold is out of range, where its text
+can be written, in `parse`'s order and with its message. Issues
 btclib-org/bip32-descriptors#248, btclib-org/bip32-descriptors#264 and
 btclib-org/bip32-descriptors#272.
 
@@ -126,8 +126,15 @@ btclib-org/bip32-descriptors#269.
 
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
 a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
-``rawpkh()`` whose key hash, is no bytes first, as its own build refuses
-it. Issue btclib-org/bip32-descriptors#271.
+``rawpkh()`` whose key hash, is no bytes, as its own build refuses it.
+Issue btclib-org/bip32-descriptors#271.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for the argument
+of a ``wsh()`` argument, refuse an unpickled argument whose network is no
+`str` as `Descriptor` refuses it, before anything else about the
+argument: its position, and the fields of the wrong type of the
+paragraphs above, are refused after it. Issue
+btclib-org/bip32-descriptors#276.
 """
 
 from __future__ import annotations
@@ -2039,6 +2046,117 @@ def test_the_keys_of_a_multi_are_refused_before_its_function(
     object.__setattr__(multi, "keys", None)
     with pytest.raises(BTClibTypeError, match="^invalid keys type: NoneType$"):
         wrap(multi)
+
+
+def _with_network(inner: Descriptor, network: object) -> Descriptor:
+    """Return `inner`, unpickled, holding `network`.
+
+    `Descriptor` refuses a network that is no `str` when built, and
+    unpickling skips that check, so the network is given to an unpickled
+    copy.
+    """
+    unpickled: Descriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
+    object.__setattr__(unpickled, "network", network)
+    return unpickled
+
+
+_AND_V_PK = cast("WshDescriptor", parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")).inner
+
+
+def _sh_wsh(inner: Descriptor) -> Descriptor:
+    return ShDescriptor(_unpickled_wsh(inner))
+
+
+# (wrapper, its argument): the last rows hold an argument in a position
+# `parse` refuses
+_NETWORK_HOLDERS: list[tuple[Callable[[Descriptor], Descriptor], Descriptor]] = [
+    (WshDescriptor, _PARSED[MultiDescriptor]),
+    (ShDescriptor, _PARSED[MultiDescriptor]),
+    (_sh_wsh, _PARSED[MultiDescriptor]),
+    (ShDescriptor, _PARSED[WpkhDescriptor]),
+    (WshDescriptor, _PARSED[RawDescriptor]),
+    (ShDescriptor, _PARSED[RawDescriptor]),
+    (_sh_wsh, _PARSED[RawDescriptor]),
+    (WshDescriptor, _PARSED[RawPkhDescriptor]),
+    (ShDescriptor, _PARSED[RawPkhDescriptor]),
+    (_sh_wsh, _PARSED[RawPkhDescriptor]),
+    (WshDescriptor, _AND_V_PK),
+    (_sh_wsh, _AND_V_PK),
+    (WshDescriptor, _PARSED[WpkhDescriptor]),
+    (_sh_wsh, _PARSED[WpkhDescriptor]),
+    (ShDescriptor, _AND_V_PK),
+    (WshDescriptor, _PARSED[ShDescriptor]),
+    (ShDescriptor, _PARSED[ShDescriptor]),
+]
+# a field of the wrong type that `_assert_inner` checks after the network
+_WRONG_FIELD: dict[type[Descriptor], tuple[str, object]] = {
+    MultiDescriptor: ("threshold", "1"),
+    RawDescriptor: ("script", None),
+    RawPkhDescriptor: ("key_hash", None),
+}
+
+
+@pytest.mark.parametrize(
+    "wrap,inner",
+    _NETWORK_HOLDERS,
+    ids=[
+        "wsh-multi",
+        "sh-multi",
+        "sh-wsh-multi",
+        "sh-wpkh",
+        "wsh-raw",
+        "sh-raw",
+        "sh-wsh-raw",
+        "wsh-rawpkh",
+        "sh-rawpkh",
+        "sh-wsh-rawpkh",
+        "wsh-ms",
+        "sh-wsh-ms",
+        "wsh-wpkh",
+        "sh-wsh-wpkh",
+        "sh-ms",
+        "wsh-sh",
+        "sh-sh",
+    ],
+)
+@pytest.mark.parametrize("network", [5, None], ids=["int", "None"])
+def test_an_unpickled_argument_whose_network_is_no_str_is_refused(
+    network: object, wrap: Callable[[Descriptor], Descriptor], inner: Descriptor
+) -> None:
+    """As `Descriptor` refuses it, before anything else about the argument.
+
+    Its position and a field of the wrong type are refused after it, as
+    the argument's own build refuses that field. Issue
+    btclib-org/bip32-descriptors#276.
+    """
+    err_msg = f"^invalid network type: {type(network).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(inner, network=cast("str", network))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrap(_with_network(inner, network))
+    if type(inner) in _WRONG_FIELD:
+        field, value = _WRONG_FIELD[type(inner)]
+        wrong: dict[str, Any] = {field: value}
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            replace(inner, network=cast("str", network), **wrong)
+        unpickled = _with_network(inner, network)
+        object.__setattr__(unpickled, field, value)
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            wrap(unpickled)
+
+
+def test_the_network_of_a_wsh_argument_is_refused_before_its_argument() -> None:
+    """``sh()`` refuses the ``wsh()``'s own network first.
+
+    Issue btclib-org/bip32-descriptors#276.
+    """
+    multi = _with_network(_PARSED[MultiDescriptor], 5)
+    wsh = _with_network(_unpickled_wsh(multi), None)
+    with pytest.raises(BTClibTypeError, match="^invalid network type: NoneType$"):
+        ShDescriptor(wsh)
+    object.__setattr__(wsh, "network", "mainnet")
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        ShDescriptor(wsh)
 
 
 @pytest.mark.parametrize(

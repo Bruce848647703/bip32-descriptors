@@ -1810,11 +1810,15 @@ class ShDescriptor(Descriptor):
     keys of a ``multi()`` is refused when built, with `parse`'s message,
     unless the argument is invalid by itself, as `Descriptor` says.
 
+    An argument whose network is no `str` is refused first, as
+    `WshDescriptor` says. So is the argument of a ``wsh()`` argument,
+    once that ``wsh()``'s own network passes.
+
     A `ShDescriptor` argument whose class writes its text with
     `ShDescriptor`'s own `str` is refused for its position without
     writing what it holds, as `_assert_inner` says, unless it is a
-    `WshDescriptor` too: its argument is then checked first, as the next
-    paragraph says.
+    `WshDescriptor` too: its argument is then checked before its
+    position, once its network passes, as the next paragraph says.
 
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
@@ -1834,6 +1838,9 @@ class ShDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
         if isinstance(self.inner, WshDescriptor):
+            # the wsh()'s own network before anything about its argument,
+            # as `_assert_inner` refuses it first
+            assert_type(self.inner.network, str, "network")
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
             assert_type(self.inner.inner, Descriptor, "inner descriptor")
@@ -1904,6 +1911,9 @@ class WshDescriptor(Descriptor):
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
 
+    An argument whose network is no `str` is refused first, as
+    `_assert_inner` says.
+
     A `ShDescriptor` or `WshDescriptor` argument whose class writes its
     text with that class's own `str` is refused for its position without
     writing what it holds, as `_assert_inner` says: an unpickled one
@@ -1924,11 +1934,11 @@ class WshDescriptor(Descriptor):
     skips that check of its own too.
 
     An unpickled ``multi()`` argument skips its own check. A field of
-    the wrong type is refused first, as `_assert_multi_types` says, and
-    a threshold out of range whose text can be written in `parse`'s
-    order, as `_assert_embedded` says. A ``raw()`` script or a
-    ``rawpkh()`` key hash that is no bytes is refused first too, as
-    `_assert_script_only_types` says.
+    the wrong type is refused as `_assert_multi_types` says, and a
+    threshold out of range whose text can be written in `parse`'s order,
+    as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
+    hash that is no bytes is refused as `_assert_script_only_types`
+    says.
     """
 
     inner: Descriptor
@@ -3024,14 +3034,18 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
 
-    A field of the wrong type that `_assert_multi_types` or
-    `_assert_script_only_types` checks is refused first, as those
-    functions say.
+    A network that is no `str` is refused first, with `Descriptor`'s
+    message: an unpickled argument skips that check of its own, and the
+    scripts of the ``sh()`` or ``wsh()`` are made with it. A field of the
+    wrong type that `_assert_multi_types` or `_assert_script_only_types`
+    checks is refused next, as those functions say. This is the order of
+    the argument's own build, which checks its network before its fields.
 
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
     with that class's own `str` is named without writing that text: an
     unpickled one can hold an argument whose text cannot be written.
     """
+    assert_type(inner.network, str, "network")
     if isinstance(inner, MultiDescriptor):
         _assert_multi_types(inner)
     elif isinstance(inner, _SCRIPT_ONLY):
