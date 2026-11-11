@@ -139,6 +139,16 @@ of a ``wsh()`` argument, refuse an unpickled argument whose network is no
 argument: its position, and the fields of the wrong type of the
 paragraphs above, are refused after it. Issue
 btclib-org/bip32-descriptors#276.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, refuse an unpickled ``rawpkh()`` whose hash is
+empty or of other than 20 bytes, as its own build refuses it, in the
+order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
+
+A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
+point, which `miniscript.from_script` reads, with `parse`'s message, the
+last two lacking the key's position. Issue
+btclib-org/bip32-descriptors#292.
 """
 
 from __future__ import annotations
@@ -2367,21 +2377,81 @@ def test_a_multi_is_refused_by_type_before_its_function_and_by_value_after(
         wrapper(holding(multi))
 
 
-@pytest.mark.parametrize(
-    "script,context",
-    [
-        (b"\x21" + _OFF_CURVE + b"\xac", miniscript.P2WSH),
-        (b"\x20" + _OFF_CURVE[1:] + b"\xac", miniscript.TAPSCRIPT),
-    ],
-    ids=["p2wsh", "tapscript"],
+# the key that is no point, as `miniscript.from_script` reads it, which a
+# `Miniscript` holds and a descriptor refuses
+_NO_POINT_HEX = _OFF_CURVE.hex()
+_READ_NO_POINT = miniscript.from_script(f"21{_NO_POINT_HEX}ac").key_expressions[0]
+_READ_X_ONLY = miniscript.from_script(
+    f"20{_NO_POINT_HEX[2:]}ac", miniscript.TAPSCRIPT
+).key_expressions[0]
+_P2WSH_NODE = miniscript.from_script(f"21{_C}ac7c21{_NO_POINT_HEX}ac9b")
+_TAPSCRIPT_NODE = miniscript.from_script(
+    f"20{_X}ac7c20{_NO_POINT_HEX[2:]}ac9b", miniscript.TAPSCRIPT
 )
-def test_a_script_holding_no_point_reads_back_as_no_miniscript(
-    script: bytes, context: str
+
+
+@pytest.mark.parametrize(
+    "build,text,position",
+    [
+        (lambda: PkDescriptor(_READ_NO_POINT), f"pk({_NO_POINT_HEX})", 0),
+        (lambda: PkhDescriptor(_READ_NO_POINT), f"pkh({_NO_POINT_HEX})", 0),
+        (lambda: WpkhDescriptor(_READ_NO_POINT), f"wpkh({_NO_POINT_HEX})", 0),
+        (lambda: ComboDescriptor(_READ_NO_POINT), f"combo({_NO_POINT_HEX})", 0),
+        (lambda: UnusedDescriptor(_READ_NO_POINT), f"unused({_NO_POINT_HEX})", 0),
+        (
+            lambda: MultiDescriptor(1, (_KEYS[0], _READ_NO_POINT)),
+            f"multi(1,{_KEYS[0]},{_NO_POINT_HEX})",
+            1,
+        ),
+        (lambda: MiniscriptDescriptor(_P2WSH_NODE), f"wsh({_P2WSH_NODE})", 1),
+        (lambda: TrDescriptor(_READ_X_ONLY), f"tr({_NO_POINT_HEX[2:]})", 0),
+        (lambda: RawTrDescriptor(_READ_X_ONLY), f"rawtr({_NO_POINT_HEX[2:]})", 0),
+        (
+            lambda: TrDescriptor(_KEY2, _READ_X_ONLY),
+            f"tr({_X2},pk({_NO_POINT_HEX[2:]}))",
+            1,
+        ),
+        (
+            lambda: TrDescriptor(_KEY2, _TAPSCRIPT_NODE),
+            f"tr({_X2},{_TAPSCRIPT_NODE})",
+            2,
+        ),
+    ],
+    ids=[
+        "pk",
+        "pkh",
+        "wpkh",
+        "combo",
+        "unused",
+        "multi",
+        "wsh miniscript",
+        "tr",
+        "rawtr",
+        "tr pk leaf",
+        "tr miniscript leaf",
+    ],
+)
+def test_a_key_from_script_that_is_no_point_is_refused_in_a_descriptor(
+    build: Callable[[], object], text: str, position: int
 ) -> None:
-    """`from_script` refuses the key as `KeyExpression` does."""
+    """With the message `parse` refuses the descriptor's text with.
+
+    `miniscript.from_script` reads such a key, as Bitcoin Core's signer
+    does. Issue btclib-org/bip32-descriptors#292.
+    """
+    message = f"^key {position}: not a public key$"
+    with pytest.raises(EccValueError, match=message):
+        parse(text)
+    with pytest.raises(EccValueError, match=message):
+        build()
+
+
+def test_a_key_from_script_that_is_no_point_is_refused_in_a_multi_a() -> None:
+    """With `parse`'s message, less the position a leaf does not know."""
+    with pytest.raises(EccValueError, match="^key 2: not a public key$"):
+        parse(f"tr({_X2},multi_a(1,{_X},{_NO_POINT_HEX[2:]}))")
     with pytest.raises(EccValueError, match="^not a public key$"):
-        miniscript.from_script(script, context)
-    assert not miniscript.reads_back(script, context)
+        MultiA(1, (_KEY, _READ_X_ONLY))
 
 
 @pytest.mark.parametrize(
@@ -2461,6 +2531,11 @@ _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
             f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
         ),
         (
+            {"participants": (_READ_NO_POINT, _FIXED_B)},
+            "musig(): not a public key",
+            f"tr(musig({_NO_POINT_HEX},{_K2}))",
+        ),
+        (
             {"participants": _MUSIG_PAIR, "der_path": (1,)},
             "musig() derivation requires every participant to be extended",
             f"tr(musig({_K},{_K2})/1)",
@@ -2494,6 +2569,7 @@ _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
         "nested",
         "x-only participant",
         "uncompressed participant",
+        "participant that is no point",
         "path, fixed participant",
         "wildcard, fixed participant",
         "path, ranged participant",
@@ -2967,6 +3043,70 @@ def test_a_rawpkh_hash_of_other_than_20_bytes_is_refused_when_built(
     object.__setattr__(unpickled, "key_hash", key_hash)
     with pytest.raises(BTClibValueError, match=err_msg):
         unpickled.script_pub_key()
+
+
+class _TrNamed(RawPkhDescriptor):
+    """A subclass writing ``tr()``, which ``sh()`` and ``wsh()`` refuse."""
+
+    @override
+    def __str__(self) -> str:
+        return f"tr({self.key_hash.hex()})"
+
+
+def _unpickled_rawpkh(key_hash: bytes, cls: type[RawPkhDescriptor]) -> Descriptor:
+    """Return ``rawpkh(KEY_HASH)`` of `cls`, unpickled, skipping its check."""
+    built = cls(bytes(20))
+    unpickled: RawPkhDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(unpickled, "key_hash", key_hash)
+    return unpickled
+
+
+_RAWPKH_WRAPPERS = pytest.mark.parametrize(
+    "wrap", [WshDescriptor, ShDescriptor, _sh_wsh], ids=["wsh", "sh", "sh-wsh"]
+)
+
+
+@_RAWPKH_WRAPPERS
+@pytest.mark.parametrize(
+    "size,refusal",
+    [
+        (0, "Rawpkh hash is not hex"),
+        (19, "160 bits digest expected"),
+        (21, "160 bits digest expected"),
+        (32, "160 bits digest expected"),
+    ],
+    ids=["empty", "19-bytes", "21-bytes", "32-bytes"],
+)
+def test_an_unpickled_rawpkh_hash_of_other_than_20_bytes_is_refused_inside(
+    size: int, refusal: str, wrap: Callable[[Descriptor], Descriptor]
+) -> None:
+    """By the wrapper when built, with its own build's message.
+
+    An unpickled ``rawpkh()`` skips its own check of the hash. The order
+    beside its network and its position is the one `_assert_inner`
+    gives. Issue btclib-org/bip32-descriptors#281.
+    """
+    err_msg = f"^{refusal}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawPkhDescriptor(bytes(size))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(bytes(size), RawPkhDescriptor))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(bytes(size), _TrNamed))
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        wrap(_with_network(_unpickled_rawpkh(bytes(size), RawPkhDescriptor), 5))
+
+
+@_RAWPKH_WRAPPERS
+def test_an_unpickled_rawpkh_of_20_bytes_is_refused_for_its_position(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """The control: a 20-byte hash passes, to its position or to a build."""
+    inner = _unpickled_rawpkh(bytes(20), _TrNamed)
+    with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside "):
+        wrap(inner)
+    built = wrap(_unpickled_rawpkh(bytes(20), RawPkhDescriptor))
+    assert parse(str(built)) == built
 
 
 _TAPSCRIPT = miniscript.TAPSCRIPT
