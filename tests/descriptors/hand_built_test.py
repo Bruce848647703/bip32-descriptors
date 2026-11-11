@@ -75,11 +75,10 @@ them uncompressed, whose redeem script is over the push limit of
 ``sh()``. Issue btclib-org/bip32-descriptors#251.
 
 `TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor`, and
-`ShDescriptor` for a ``wsh()`` argument, refuse an unpickled node of a
-fragment the library defines holding a number of subexpressions that
-fragment does not take, with the node's own message, before its text is
-written: after its context and its fragment's type, before its keys.
-Issue btclib-org/bip32-descriptors#275.
+`ShDescriptor` for a ``wsh()`` argument, refuse an unpickled node holding
+a number of subexpressions its fragment does not take, with the node's
+own message, before its text is written: after its context and its
+fragment, before its keys. Issue btclib-org/bip32-descriptors#275.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
@@ -3401,15 +3400,6 @@ def test_a_node_holding_a_number_of_keys_its_fragment_does_not_take_is_refused(
         replace(node, keys=keys)
     with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
         wrap(root)
-
-
-def test_an_unpickled_unknown_fragment_is_left_to_its_key_count() -> None:
-    """The arity rule only names fragments the library defines."""
-    root = _unpickled(miniscript.parse(f"and_v(v:pk({_C}),older(1))", _P2WSH))
-    object.__setattr__(root.subs[1], "fragment", _RANDOM_HEX)
-    object.__setattr__(root.subs[1], "keys", (_C_KEYS[0],))
-    with pytest.raises(BTClibValueError, match="^invalid number of keys in a node: 1$"):
-        WshDescriptor(MiniscriptDescriptor(root))
 
 
 # (fragment, context, the keys of its node, the refusal `parse` gives)
