@@ -1209,8 +1209,9 @@ def _and_v_older(key: KeyExpression) -> MiniscriptDescriptor:
 def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
     """Return ``multi(1,KEY,...)``, unpickled.
 
-    `MultiDescriptor` refuses more than 20 keys when built, and unpickling
-    skips that check, so the keys are given to an unpickled copy.
+    `MultiDescriptor` refuses no key and more than 20 keys when built, and
+    unpickling skips those checks, so the keys are given to an unpickled
+    copy.
     """
     parsed = _PARSED[MultiDescriptor]
     multi: MultiDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -1292,6 +1293,16 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
         "multi() takes at most 20 keys, 21 given",
     ),
     (
+        WshDescriptor,
+        _unpickled_multi(()),
+        "multi() takes a threshold and at least one key",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_multi(()),
+        "multi() takes a threshold and at least one key",
+    ),
+    (
         ShDescriptor,
         MultiDescriptor(1, _KEYS[:16]),
         (
@@ -1343,6 +1354,8 @@ _REFUSED_INSIDE_IDS = [
     "wsh-miniscript",
     "wsh-21-keys",
     "sh-21-keys",
+    "wsh-no-keys",
+    "sh-no-keys",
     "sh-547-bytes",
     "sh-531-bytes",
     *(

@@ -2812,13 +2812,14 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, the
-    number of keys of a ``multi()``, and the size of its script, in
-    `parse`'s order and with its messages: key by key, each refused for
-    its taproot spelling before its compression. An unpickled argument
-    skips its own check of the keys. ``sh()`` and ``wsh()`` hold no key
-    of their own, so a key's position in `inner`, counted as
-    `_assert_keys` counts it, is the one `parse` names.
+    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, a
+    ``multi()`` with no key, the number of keys of a ``multi()``, and
+    the size of its script, in `parse`'s order and with its messages:
+    key by key, each refused for its taproot spelling before its
+    compression. An unpickled argument skips its own check of the keys.
+    ``sh()`` and ``wsh()`` hold no key of their own, so a key's position
+    in `inner`, counted as `_assert_keys` counts it, is the one `parse`
+    names.
 
     Inside ``sh()``, the keys of a ``wsh()`` argument are refused
     uncompressed too, because `parse` reads them in the ``wsh()``
@@ -2834,6 +2835,8 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     _assert_keys(inner.key_expressions, check)
     if isinstance(inner, MultiDescriptor):
         name = str(inner).partition("(")[0]
+        if not inner.keys:
+            raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
         _assert_multi_count(name, inner.keys)
         _assert_multi_size(name, inner.keys, context)
     elif isinstance(inner, RawDescriptor):
