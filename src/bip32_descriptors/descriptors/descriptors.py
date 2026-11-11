@@ -1827,8 +1827,9 @@ class ShDescriptor(Descriptor):
     `WshDescriptor` refuses one, before ``sh()`` writes its text.
 
     An unpickled ``multi()`` argument is refused for a field of the
-    wrong type and for its threshold as `WshDescriptor` says, and a
-    ``raw()`` or ``rawpkh()`` one for its bytes.
+    wrong type and for its threshold, a ``raw()`` or ``rawpkh()`` one for
+    its bytes, and a ``rawpkh()`` one for the size of its hash, as
+    `WshDescriptor` says.
     """
 
     inner: Descriptor
@@ -1938,7 +1939,8 @@ class WshDescriptor(Descriptor):
     threshold out of range whose text can be written in `parse`'s order,
     as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
     hash that is no bytes is refused as `_assert_script_only_types`
-    says.
+    says, and a ``rawpkh()`` key hash of other than 20 bytes as
+    `_assert_inner` says.
     """
 
     inner: Descriptor
@@ -3041,6 +3043,11 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     checks is refused next, as those functions say. This is the order of
     the argument's own build, which checks its network before its fields.
 
+    The hash of a ``rawpkh()`` is then refused for its size, with
+    `_assert_key_hash_size`'s message, before its position: an unpickled
+    ``rawpkh()`` skips that check of its own, which its build runs after
+    the type of the hash.
+
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
     with that class's own `str` is named without writing that text: an
     unpickled one can hold an argument whose text cannot be written.
@@ -3050,6 +3057,8 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
         _assert_multi_types(inner)
     elif isinstance(inner, _SCRIPT_ONLY):
         _assert_script_only_types(inner)
+        if isinstance(inner, RawPkhDescriptor):
+            _assert_key_hash_size(inner.key_hash)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)

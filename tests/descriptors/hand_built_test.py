@@ -135,6 +135,11 @@ of a ``wsh()`` argument, refuse an unpickled argument whose network is no
 argument: its position, and the fields of the wrong type of the
 paragraphs above, are refused after it. Issue
 btclib-org/bip32-descriptors#276.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, refuse an unpickled ``rawpkh()`` whose hash is
+empty or of other than 20 bytes, as its own build refuses it, in the
+order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
 """
 
 from __future__ import annotations
@@ -2963,6 +2968,70 @@ def test_a_rawpkh_hash_of_other_than_20_bytes_is_refused_when_built(
     object.__setattr__(unpickled, "key_hash", key_hash)
     with pytest.raises(BTClibValueError, match=err_msg):
         unpickled.script_pub_key()
+
+
+class _TrNamed(RawPkhDescriptor):
+    """A subclass writing ``tr()``, which ``sh()`` and ``wsh()`` refuse."""
+
+    @override
+    def __str__(self) -> str:
+        return f"tr({self.key_hash.hex()})"
+
+
+def _unpickled_rawpkh(key_hash: bytes, cls: type[RawPkhDescriptor]) -> Descriptor:
+    """Return ``rawpkh(KEY_HASH)`` of `cls`, unpickled, skipping its check."""
+    built = cls(bytes(20))
+    unpickled: RawPkhDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(unpickled, "key_hash", key_hash)
+    return unpickled
+
+
+_RAWPKH_WRAPPERS = pytest.mark.parametrize(
+    "wrap", [WshDescriptor, ShDescriptor, _sh_wsh], ids=["wsh", "sh", "sh-wsh"]
+)
+
+
+@_RAWPKH_WRAPPERS
+@pytest.mark.parametrize(
+    "size,refusal",
+    [
+        (0, "Rawpkh hash is not hex"),
+        (19, "160 bits digest expected"),
+        (21, "160 bits digest expected"),
+        (32, "160 bits digest expected"),
+    ],
+    ids=["empty", "19-bytes", "21-bytes", "32-bytes"],
+)
+def test_an_unpickled_rawpkh_hash_of_other_than_20_bytes_is_refused_inside(
+    size: int, refusal: str, wrap: Callable[[Descriptor], Descriptor]
+) -> None:
+    """By the wrapper when built, with its own build's message.
+
+    An unpickled ``rawpkh()`` skips its own check of the hash. The order
+    beside its network and its position is the one `_assert_inner`
+    gives. Issue btclib-org/bip32-descriptors#281.
+    """
+    err_msg = f"^{refusal}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawPkhDescriptor(bytes(size))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(bytes(size), RawPkhDescriptor))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(bytes(size), _TrNamed))
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        wrap(_with_network(_unpickled_rawpkh(bytes(size), RawPkhDescriptor), 5))
+
+
+@_RAWPKH_WRAPPERS
+def test_an_unpickled_rawpkh_of_20_bytes_is_refused_for_its_position(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """The control: a 20-byte hash passes, to its position or to a build."""
+    inner = _unpickled_rawpkh(bytes(20), _TrNamed)
+    with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside "):
+        wrap(inner)
+    built = wrap(_unpickled_rawpkh(bytes(20), RawPkhDescriptor))
+    assert parse(str(built)) == built
 
 
 _TAPSCRIPT = miniscript.TAPSCRIPT
