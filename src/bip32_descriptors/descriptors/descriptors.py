@@ -1964,6 +1964,14 @@ class MiniscriptDescriptor(Descriptor):
     and the node's text can be written: the node is then left to the
     text and sanity checks above, and the key to ``wsh()``, which refuses
     it by its position.
+
+    `parse` takes one only inside ``wsh()``. The refusal of a top-level one
+    is `parse`'s alone: the build cannot know whether the value will be
+    wrapped, and ``sh()`` refuses it when it wraps it. One built by hand
+    at the top level builds, gives its script, and writes a text `parse`
+    refuses, as Bitcoin Core's parser does. `infer_descriptor` answers the
+    ``raw()`` of that script, since Core's `InferDescriptor` reads a
+    miniscript only inside ``wsh()`` and ``tr()``.
     """
 
     node: Miniscript
