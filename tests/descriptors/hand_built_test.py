@@ -74,6 +74,10 @@ the message `parse` gives inside ``sh()``: more than three keys, one of
 them uncompressed, whose redeem script is over the push limit of
 ``sh()``. Issue btclib-org/bip32-descriptors#251.
 
+`TrDescriptor` refuses an unpickled ``multi()`` in a tapscript leaf, and
+`WshDescriptor` an unpickled ``multi_a()`` in its script, with their
+build's message. Issue btclib-org/bip32-descriptors#243.
+
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
 Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
@@ -3248,6 +3252,24 @@ def test_a_node_holding_a_number_of_keys_its_fragment_does_not_take_is_refused(
         replace(node, keys=keys)
     with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
         wrap(root)
+
+
+def test_an_unpickled_multi_in_tapscript_is_refused() -> None:
+    """A tapscript leaf cannot hold OP_CHECKMULTISIG. Issue #243."""
+    root = _holding("multi", _TAPSCRIPT, _X_KEYS[:3])
+    with pytest.raises(
+        BTClibValueError, match="^multi\\(\\) is not allowed in a tapscript$"
+    ):
+        TrDescriptor(_KEY, root)
+
+
+def test_an_unpickled_multi_a_in_p2wsh_is_refused() -> None:
+    """A P2WSH script cannot hold multi_a(). Issue #243."""
+    root = _holding("multi_a", _P2WSH, _C_KEYS[:3])
+    with pytest.raises(
+        BTClibValueError, match="^multi_a\\(\\) is only allowed in a tapscript$"
+    ):
+        WshDescriptor(MiniscriptDescriptor(root))
 
 
 # (fragment, context, the keys of its node, the refusal `parse` gives)

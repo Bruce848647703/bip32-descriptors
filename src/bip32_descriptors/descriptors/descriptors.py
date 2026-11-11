@@ -769,8 +769,7 @@ def _assert_key_numbers(
     ``pk_h`` reads only its first key. A fragment the library does not
     define is named "a node", and taken to hold no key.
 
-    Such a node is refused for a multisig outside its context, as its
-    build refuses it. Otherwise, where `keys` hold an uncompressed one,
+    Where `keys` hold an uncompressed one,
     in that node or any other, it is left to the checks that follow: the
     text and the sanity of what holds it, then the key check of ``tr()``
     or ``wsh()``, which names the first such key by its position there,
@@ -797,9 +796,6 @@ def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
     try:
         _assert_key_number(fragment, len(node.keys))
     except BTClibValueError:
-        tapscript = node.context == miniscript.TAPSCRIPT
-        if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != tapscript:
-            raise BTClibValueError(_multisig_context_fault(fragment)) from None
         if not uncompressed or (fragment in {"pk_k", "pk_h"} and not node.keys):
             raise
 
@@ -828,7 +824,8 @@ def _tapscript_node(node: object) -> Miniscript:
     does, holds any value as a subexpression, a context or a fragment, so
     only the library's own context is named, a refusal echoing no value
     it holds. Once its context passes, its fragment is refused as
-    `_assert_fragment_type` says.
+    `_assert_fragment_type` says, and a ``multi()`` for its context, as
+    `Miniscript` refuses it when built.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -838,6 +835,8 @@ def _tapscript_node(node: object) -> Miniscript:
         err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
         raise BTClibValueError(err_msg)
     _assert_fragment_type(node.fragment)
+    if node.fragment == "multi":
+        raise BTClibValueError(_multisig_context_fault("multi"))
     return node
 
 
@@ -2026,7 +2025,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
 
     A node is refused first where it is no `Miniscript`, and, once its
     context passes, where `_assert_fragment_type` refuses its fragment,
-    before its keys are read.
+    before its keys are read. A ``multi_a()`` is then refused for its
+    context, as `Miniscript` refuses it when built.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.
@@ -2042,6 +2042,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
         _assert_fragment_type(sub.fragment)
+        if sub.fragment == "multi_a":
+            raise BTClibValueError(_multisig_context_fault("multi_a"))
         _assert_key_types(sub)
         stack += sub.subs
 
