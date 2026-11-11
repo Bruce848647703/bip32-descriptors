@@ -34,6 +34,8 @@ file whose name they could take:
   file for either, so no upstream name to take.
 - `preimage_descriptors.json` is composed here, for a syntax no BIP
   specifies yet.
+- `core_musig_sortedmulti_a.json` is recorded from Bitcoin Core's output,
+  and `core_musig_sortedmulti_a.cpp` is the harness that prints it.
 
 ## Reading an entry
 
@@ -408,6 +410,64 @@ Also not here: `random_tests`, which generates expressions from a seeded
 RNG and checks the satisfier against the script interpreter. Satisfaction
 is not implemented (issue btclib-org/btclib#187), so there is nothing yet
 for those to measure.
+
+### `tests/_data/core_musig_sortedmulti_a.json`
+
+```text
+repo    bitcoin/bitcoin
+path    src/script/descriptor.cpp
+commit  002b119ce6626fc8397e8a1ff3439eb3ffe7be1f  2026-11-04
+ours    a29724e721cd9698b97a89e5ab9a525a7f7741ff
+pulled  2026-11-10
+behind  0 revisions; that commit is the tip of the path
+```
+
+Verdict: **recorded**. The file holds Bitcoin Core's scriptPubKeys for
+the Taproot descriptor that `CreateMultisigDescriptor` of
+bitcoin/bitcoin#36143 assembles: a `tr()` whose key path is the MuSig2
+aggregate of the account xpubs, derived after aggregation, and whose leaf
+is a `sortedmulti_a` over the same xpubs. Each case is one key set and
+one threshold, with its receive and change scriptPubKeys at the first
+indexes. `tests/descriptors/core_musig_sortedmulti_a_test.py` reads it,
+for issue btclib-org/bip32-descriptors#198.
+
+That pull request assembles the string only. `Parse` and the
+`MuSigPubkeyProvider` of the pinned path expand it, and both are on
+master, so the file is recorded from master:
+`tests/_data/core_musig_sortedmulti_a.cpp` is a `test_bitcoin` case that
+derives the keys from fixed seeds, assembles each descriptor as that pull
+request does, and writes this file from Core's scripts. It is not part
+of this suite. The `wsh(sortedmulti(...))` descriptor of the same pull
+request is not recorded: BIP388's vectors above hold one of that shape.
+
+The pin is the last commit touching the path, the one the weekly re-check
+compares. The file was written at master commit
+`117c54d4c575aa19027b2227bb45dc60b63b3278`, which contains the pin. From
+the repository root, with `bitcoin` a checkout of Bitcoin Core, these
+commands write the file again; `git hash-object` then prints the `ours`
+blob.
+
+```shell
+commit=117c54d4c575aa19027b2227bb45dc60b63b3278
+```
+
+```shell
+bitcoin=${bitcoin:-../bitcoin}
+core=$(mktemp -d)
+git -C "$bitcoin" archive "${commit:?}" | tar -x -C "$core"
+cat tests/_data/core_musig_sortedmulti_a.cpp \
+    >> "$core/src/test/descriptor_tests.cpp"
+cmake -S "$core" -B "$core/build" -DBUILD_DAEMON=OFF -DBUILD_CLI=OFF \
+    -DBUILD_BITCOIN_BIN=OFF -DBUILD_TX=OFF -DBUILD_UTIL=OFF \
+    -DENABLE_WALLET=OFF -DENABLE_IPC=OFF -DENABLE_EXTERNAL_SIGNER=OFF \
+    -DWITH_CCACHE=OFF -DINSTALL_MAN=OFF
+cmake --build "$core/build" --target test_bitcoin
+"$core/build/bin/test_bitcoin" --run_test=core_musig_sortedmulti_a \
+    --log_level=nothing --report_level=no \
+    > tests/_data/core_musig_sortedmulti_a.json
+git hash-object tests/_data/core_musig_sortedmulti_a.json
+rm -rf "${core:?}"
+```
 
 ### Not vendored as a file: Core's descriptor derivation vectors
 
@@ -798,7 +858,7 @@ lists *are* the fact the number summarized, and the tree answers
 whenever the number is wanted:
 
 ```shell
-git ls-files 'tests/_data/*' 'tests/*/_data/*' | grep -cvE 'README\.md$'
+git ls-files 'tests/_data/*' 'tests/*/_data/*' | grep -cvE '(README\.md|\.cpp)$'
 ```
 
 Not checked byte for byte against an upstream blob:
@@ -809,6 +869,8 @@ Not checked byte for byte against an upstream blob:
   `miniscript_fixed_tests.json`.
 - composed here: `preimage_descriptors.json`, for a syntax no BIP
   specifies, its public forms checked against Bitcoin Core.
+- recorded: `core_musig_sortedmulti_a.json`, Bitcoin Core's output at a
+  master commit, printed by the harness beside it.
 - not vendored: `descriptor_checksums.json`, composed rather than
   recorded: its checksums come from a third implementation run over
   Core's own descriptors.
