@@ -390,9 +390,9 @@ class KeyExpression:
     def __post_init__(self) -> None:
         """Check key fields, `der_path`, `wildcard` and `hardening`.
 
-        A `pub_key` is the SEC bytes of a point, as `_assert_pub_key` says,
-        and the whole key: no `xkey`, `participants`, `der_path` or
-        `wildcard` beside it. `x_only` takes a 0x02 `pub_key` of 33 bytes.
+        A `pub_key` is SEC bytes, checked as `_assert_pub_key` says, and
+        the whole key: no `xkey`, `participants`, `der_path` or `wildcard`
+        beside it. `x_only` takes a 0x02 `pub_key` of 33 bytes.
         `participants` make a ``musig()`` as `_assert_musig` says.
         `wildcard` is None, 0 or 2**31. `hardening` is one of the two
         symbols BIP380 allows. A refusal quotes no key, beyond the prefix
@@ -884,6 +884,24 @@ _X_ONLY_REFUSED = "x-only public keys are allowed in a taproot key expression on
 _UNCOMPRESSED_REFUSED = "uncompressed public keys are not allowed here"
 
 
+# True while `miniscript.from_script` reads the keys of a script
+_SCRIPT_KEYS: ContextVar[bool] = ContextVar("_SCRIPT_KEYS", default=False)
+
+
+@contextmanager
+def _script_keys() -> Iterator[None]:
+    """Build, inside the block, a key that is no point.
+
+    `miniscript.from_script` reads a script's keys inside it, as its
+    docstring says.
+    """
+    token = _SCRIPT_KEYS.set(True)
+    try:
+        yield
+    finally:
+        _SCRIPT_KEYS.reset(token)
+
+
 def _assert_pub_key(key: KeyExpression) -> None:
     """Refuse a `pub_key` value and an `x_only` that `parse` never builds.
 
@@ -893,6 +911,8 @@ def _assert_pub_key(key: KeyExpression) -> None:
     key is held in the 33 bytes of its even-y form. `parse` reads an
     uncompressed WIF in a taproot position to one of 65, which this
     refuses with the message `parse` gives for it.
+
+    A key that is no point is refused outside `_script_keys` only.
     """
     pub_key = key.pub_key
     if pub_key is None:
@@ -910,8 +930,9 @@ def _assert_pub_key(key: KeyExpression) -> None:
         # 06 and 07 are the hybrid encoding, which nothing in bitcoin
         # produces and Bitcoin Core refuses in a descriptor too
         raise BTClibValueError(f"invalid public key prefix: 0x{prefix:02x}")
-    # a point off the curve has no script to derive
-    point_from_pub_key(pub_key)
+    # as Bitcoin Core's descriptor parser does
+    if not _SCRIPT_KEYS.get():
+        point_from_pub_key(pub_key)
     if key.x_only and size != 33:
         raise BTClibValueError(_UNCOMPRESSED_REFUSED)
     if key.x_only and prefix == 3:
@@ -962,13 +983,13 @@ def _assert_wildcard(wildcard: object) -> None:
 def _assert_musig(key: KeyExpression) -> None:
     """Refuse the ``musig()`` keys below, which `parse` never builds.
 
-    Each participant is a `KeyExpression`, neither a ``musig()`` nor
-    x-only nor uncompressed, and the ``musig()`` has no `xkey` and no
-    `origin`, which `str` would not write. Its `hardening` is `h`, which
-    `parse` gives every ``musig()``. A path or a wildcard on it takes
-    extended participants none of which is ranged, and no hardened step
-    or wildcard. A refusal carries `parse`'s message, except for a type,
-    an `xkey` and a `hardening`, for which `parse` has none.
+    Each participant is a `KeyExpression`, neither a ``musig()`` nor x-only
+    nor uncompressed nor a key that is no point, and the ``musig()`` has no
+    `xkey` and no `origin`, which `str` would not write. Its `hardening` is
+    `h`, which `parse` gives every ``musig()``. A path or a wildcard on it
+    takes extended participants none of which is ranged, and no hardened
+    step or wildcard. A refusal carries `parse`'s message, except for a
+    type, an `xkey` and a `hardening`, for which `parse` has none.
     """
     participants = key.participants
     if not participants:
@@ -997,6 +1018,11 @@ def _assert_participants(participants: tuple[KeyExpression, ...]) -> None:
             raise BTClibValueError(f"musig(): {_X_ONLY_REFUSED}")
         if not participant.is_compressed:
             raise BTClibValueError(f"musig(): {_UNCOMPRESSED_REFUSED}")
+        # a key `miniscript.from_script` read may be no point
+        try:
+            _assert_point(participant)
+        except EccValueError as e:
+            raise BTClibValueError(f"musig(): {e}") from None
 
 
 def _assert_musig_path(key: KeyExpression) -> None:
@@ -1117,6 +1143,15 @@ def _assert_compressed(key: KeyExpression) -> None:
     """Refuse an uncompressed key, with `parse`'s message."""
     if not key.is_compressed:
         raise BTClibValueError(_UNCOMPRESSED_REFUSED)
+
+
+def _assert_point(key: KeyExpression) -> None:
+    """Refuse a key that is no point, as `parse` refuses it.
+
+    `KeyExpression` builds one inside `_script_keys` only.
+    """
+    if key.pub_key is not None:
+        point_from_pub_key(key.pub_key)
 
 
 # Bitcoin Core's own message, refusing a key path with two multipath steps

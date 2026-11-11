@@ -220,6 +220,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_musig_allowed,
     _assert_network,
     _assert_outside_taproot,
+    _assert_point,
     _assert_prv_keys,
     _derived_once,
     _expression,
@@ -499,10 +500,10 @@ class MultiA:
         A threshold of none or of more keys than there are, or more keys
         than BIP387 allows, describes a script nobody can spend.
 
-        An uncompressed key is refused first, as `parse` reads the keys
-        before it counts them. Its message is `parse`'s without the
-        ``key N:`` that names the key's position in the ``tr()``, which a
-        leaf does not know.
+        An uncompressed key and a key that is no point are refused first,
+        as `parse` reads the keys before it counts them. Their message is
+        `parse`'s without the ``key N:`` that names the key's position in
+        the ``tr()``, which a leaf does not know.
         """
         if not is_integer(self.threshold):
             err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
@@ -513,6 +514,7 @@ class MultiA:
         assert_type(self.sort, bool, "sort")
         for key in self.keys:
             _assert_compressed(key)
+            _assert_point(key)
         name = "sortedmulti_a" if self.sort else "multi_a"
         if not 1 <= self.threshold <= len(self.keys):
             raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
@@ -889,7 +891,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
     says. It is then refused where `parse` reads its text as a function,
     such as ``pk()`` or ``multi_a()``, or would refuse it without
     `prv_keys`: either way the descriptor would not parse back from its
-    text.
+    text. A key that is no point is left to `_assert_keys`.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -1628,12 +1630,13 @@ class Descriptor(ABC):
 def _assert_keys(
     keys: Iterable[KeyExpression], check: Callable[[KeyExpression], None]
 ) -> None:
-    """Refuse a key `check` refuses, with `parse`'s message.
+    """Refuse a key `check` refuses, then one that is no point.
 
-    The message names the key by its position, counted as `_parse_key`
-    counts it: a ``musig()`` takes one position for each participant and
-    one for itself, and a key refused for itself is named by the first
-    of its positions, where `parse` refuses it.
+    With `parse`'s message, which names the key by its position, counted
+    as `_parse_key` counts it: a ``musig()`` takes one position for each
+    participant and one for itself, and a key refused for itself is named
+    by the first of its positions, where `parse` refuses it. A key that is
+    no point is one `miniscript.from_script` reads.
     """
     position = 0
     for key in keys:
@@ -1641,6 +1644,10 @@ def _assert_keys(
             check(key)
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
+        try:
+            _assert_point(key)
+        except EccValueError as e:
+            raise EccValueError(f"key {position}: {e}") from None
         position += len(key.participants) + 1
 
 

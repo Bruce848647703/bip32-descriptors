@@ -109,7 +109,6 @@ from btclib.utils import (
     is_integer,
 )
 from btclib.var_int import serialize as var_int_serialize
-from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import BIP32KeyData
@@ -122,6 +121,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_prv_keys,
     _offered_signature,
     _parse_key,
+    _script_keys,
     _split_arguments,
     _wifs_filed_in,
 )
@@ -3312,8 +3312,10 @@ def from_script(
     miniscript, and this is what answers the question -- a caller asking
     it catches the refusal.
 
-    A key that is no point is refused as `KeyExpression` refuses it, by
-    the curve library.
+    A key is read as Bitcoin Core's signer reads it, by its size and, in
+    P2WSH, its prefix: a key that is no point is read too. The `str` of
+    what holds it is then a text that `parse` refuses, as Core's parser
+    does, and a descriptor refuses the key when built.
 
     `key_hashes` maps a hash160 to the public key behind it, for the one
     fragment that keeps no key in the script: ``pk_h()`` and its sugared
@@ -3338,7 +3340,8 @@ def from_script(
             for key_hash, key in (key_hashes or {}).items()
         },
     )
-    node = decoder.decode()
+    with _script_keys():
+        node = decoder.decode()
     if decoder.pos != len(decoder.entries):
         err_msg = "not a miniscript: the script holds more than one expression"
         raise BTClibValueError(err_msg)
@@ -3378,7 +3381,7 @@ def reads_back(
     script = bytes_from_octets(script)
     try:
         node = from_script(script, context, key_hashes)
-    except (BTClibValueError, EccValueError):
+    except BTClibValueError:
         return False
     return node.script() == script
 
@@ -3422,10 +3425,11 @@ def _assert_sane(node: Miniscript, prv_keys: PrvKeys) -> None:
 def _assert_sane_script(node: Miniscript) -> None:
     """Refuse a hand-built miniscript that `parse` refuses without `prv_keys`.
 
-    A descriptor holding one would not parse back from its own text. With
-    no private key a key behind a hardened step is compared by its
-    expression, as `Miniscript.has_duplicate_keys` says, so `parse` with
-    `prv_keys` may still refuse what this accepts.
+    A descriptor holding one would not parse back from its own text. A key
+    that is no point is the descriptor's to refuse. With no private key a
+    key behind a hardened step is compared by its expression, as
+    `Miniscript.has_duplicate_keys` says, so `parse` with `prv_keys` may
+    still refuse what this accepts.
     """
     _assert_script(node)
     _assert_sane(node, {})

@@ -140,6 +140,11 @@ btclib-org/bip32-descriptors#276.
 a ``wsh()`` argument, refuse an unpickled ``rawpkh()`` whose hash is
 empty or of other than 20 bytes, as its own build refuses it, in the
 order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
+
+A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
+point, which `miniscript.from_script` reads, with `parse`'s message, the
+last two lacking the key's position. Issue
+btclib-org/bip32-descriptors#292.
 """
 
 from __future__ import annotations
@@ -2368,21 +2373,81 @@ def test_a_multi_is_refused_by_type_before_its_function_and_by_value_after(
         wrapper(holding(multi))
 
 
-@pytest.mark.parametrize(
-    "script,context",
-    [
-        (b"\x21" + _OFF_CURVE + b"\xac", miniscript.P2WSH),
-        (b"\x20" + _OFF_CURVE[1:] + b"\xac", miniscript.TAPSCRIPT),
-    ],
-    ids=["p2wsh", "tapscript"],
+# the key that is no point, as `miniscript.from_script` reads it, which a
+# `Miniscript` holds and a descriptor refuses
+_NO_POINT_HEX = _OFF_CURVE.hex()
+_READ_NO_POINT = miniscript.from_script(f"21{_NO_POINT_HEX}ac").key_expressions[0]
+_READ_X_ONLY = miniscript.from_script(
+    f"20{_NO_POINT_HEX[2:]}ac", miniscript.TAPSCRIPT
+).key_expressions[0]
+_P2WSH_NODE = miniscript.from_script(f"21{_C}ac7c21{_NO_POINT_HEX}ac9b")
+_TAPSCRIPT_NODE = miniscript.from_script(
+    f"20{_X}ac7c20{_NO_POINT_HEX[2:]}ac9b", miniscript.TAPSCRIPT
 )
-def test_a_script_holding_no_point_reads_back_as_no_miniscript(
-    script: bytes, context: str
+
+
+@pytest.mark.parametrize(
+    "build,text,position",
+    [
+        (lambda: PkDescriptor(_READ_NO_POINT), f"pk({_NO_POINT_HEX})", 0),
+        (lambda: PkhDescriptor(_READ_NO_POINT), f"pkh({_NO_POINT_HEX})", 0),
+        (lambda: WpkhDescriptor(_READ_NO_POINT), f"wpkh({_NO_POINT_HEX})", 0),
+        (lambda: ComboDescriptor(_READ_NO_POINT), f"combo({_NO_POINT_HEX})", 0),
+        (lambda: UnusedDescriptor(_READ_NO_POINT), f"unused({_NO_POINT_HEX})", 0),
+        (
+            lambda: MultiDescriptor(1, (_KEYS[0], _READ_NO_POINT)),
+            f"multi(1,{_KEYS[0]},{_NO_POINT_HEX})",
+            1,
+        ),
+        (lambda: MiniscriptDescriptor(_P2WSH_NODE), f"wsh({_P2WSH_NODE})", 1),
+        (lambda: TrDescriptor(_READ_X_ONLY), f"tr({_NO_POINT_HEX[2:]})", 0),
+        (lambda: RawTrDescriptor(_READ_X_ONLY), f"rawtr({_NO_POINT_HEX[2:]})", 0),
+        (
+            lambda: TrDescriptor(_KEY2, _READ_X_ONLY),
+            f"tr({_X2},pk({_NO_POINT_HEX[2:]}))",
+            1,
+        ),
+        (
+            lambda: TrDescriptor(_KEY2, _TAPSCRIPT_NODE),
+            f"tr({_X2},{_TAPSCRIPT_NODE})",
+            2,
+        ),
+    ],
+    ids=[
+        "pk",
+        "pkh",
+        "wpkh",
+        "combo",
+        "unused",
+        "multi",
+        "wsh miniscript",
+        "tr",
+        "rawtr",
+        "tr pk leaf",
+        "tr miniscript leaf",
+    ],
+)
+def test_a_key_from_script_that_is_no_point_is_refused_in_a_descriptor(
+    build: Callable[[], object], text: str, position: int
 ) -> None:
-    """`from_script` refuses the key as `KeyExpression` does."""
+    """With the message `parse` refuses the descriptor's text with.
+
+    `miniscript.from_script` reads such a key, as Bitcoin Core's signer
+    does. Issue btclib-org/bip32-descriptors#292.
+    """
+    message = f"^key {position}: not a public key$"
+    with pytest.raises(EccValueError, match=message):
+        parse(text)
+    with pytest.raises(EccValueError, match=message):
+        build()
+
+
+def test_a_key_from_script_that_is_no_point_is_refused_in_a_multi_a() -> None:
+    """With `parse`'s message, less the position a leaf does not know."""
+    with pytest.raises(EccValueError, match="^key 2: not a public key$"):
+        parse(f"tr({_X2},multi_a(1,{_X},{_NO_POINT_HEX[2:]}))")
     with pytest.raises(EccValueError, match="^not a public key$"):
-        miniscript.from_script(script, context)
-    assert not miniscript.reads_back(script, context)
+        MultiA(1, (_KEY, _READ_X_ONLY))
 
 
 @pytest.mark.parametrize(
@@ -2462,6 +2527,11 @@ _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
             f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
         ),
         (
+            {"participants": (_READ_NO_POINT, _FIXED_B)},
+            "musig(): not a public key",
+            f"tr(musig({_NO_POINT_HEX},{_K2}))",
+        ),
+        (
             {"participants": _MUSIG_PAIR, "der_path": (1,)},
             "musig() derivation requires every participant to be extended",
             f"tr(musig({_K},{_K2})/1)",
@@ -2495,6 +2565,7 @@ _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
         "nested",
         "x-only participant",
         "uncompressed participant",
+        "participant that is no point",
         "path, fixed participant",
         "wildcard, fixed participant",
         "path, ranged participant",
