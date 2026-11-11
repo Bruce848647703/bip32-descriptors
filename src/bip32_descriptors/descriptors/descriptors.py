@@ -1810,6 +1810,12 @@ class ShDescriptor(Descriptor):
     keys of a ``multi()`` is refused when built, with `parse`'s message,
     unless the argument is invalid by itself, as `Descriptor` says.
 
+    A `ShDescriptor` argument whose class writes its text with
+    `ShDescriptor`'s own `str` is refused for its position without
+    writing what it holds, as `_assert_inner` says, unless it is a
+    `WshDescriptor` too: its argument is then checked first, as the next
+    paragraph says.
+
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
@@ -1897,6 +1903,12 @@ class WshDescriptor(Descriptor):
     the size of its script or by the number of keys of a ``multi()`` is
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
+
+    A `ShDescriptor` or `WshDescriptor` argument whose class writes its
+    text with that class's own `str` is refused for its position without
+    writing what it holds, as `_assert_inner` says: an unpickled one
+    skips its own check, and what it holds need not be written without
+    raising.
 
     A miniscript argument is refused before its text is written: for
     its nodes as `MiniscriptDescriptor` refuses them, their type,
@@ -3004,6 +3016,10 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     A field of the wrong type that `_assert_multi_types` or
     `_assert_script_only_types` checks is refused first, as those
     functions say.
+
+    A `ShDescriptor` or a `WshDescriptor` whose class writes its text
+    with that class's own `str` is named without writing that text: an
+    unpickled one can hold an argument whose text cannot be written.
     """
     if isinstance(inner, MultiDescriptor):
         _assert_multi_types(inner)
@@ -3013,7 +3029,15 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
         return
-    name = str(inner).partition("(")[0]
+    if isinstance(inner, ShDescriptor) and type(inner).__str__ is ShDescriptor.__str__:
+        name = "sh"
+    elif (
+        isinstance(inner, WshDescriptor)
+        and type(inner).__str__ is WshDescriptor.__str__
+    ):
+        name = "wsh"
+    else:
+        name = str(inner).partition("(")[0]
     if name not in _PARSERS:
         err_msg = f"{type(inner).__name__} writes no function parse reads"
         raise BTClibValueError(f"{err_msg} inside {context}")

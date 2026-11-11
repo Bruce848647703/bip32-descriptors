@@ -114,6 +114,11 @@ message, once its nodes and keys pass. They do not ask again the sanity
 of one `parse` or `infer_descriptor` has read. Issue
 btclib-org/bip32-descriptors#267.
 
+`WshDescriptor` and `ShDescriptor` refuse an unpickled ``sh()`` or
+``wsh()`` argument in a position `parse` refuses it without writing the
+text of what it holds, as their docstrings say. Issue
+btclib-org/bip32-descriptors#269.
+
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
 a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
 ``rawpkh()`` whose key hash, is no bytes first, as its own build refuses
@@ -1828,6 +1833,148 @@ def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
     parsed = cast("ShDescriptor", _PARSED[ShDescriptor])
     with pytest.raises(BTClibTypeError, match=err_msg):
         replace(parsed, inner=inner)
+
+
+class _PlainSh(ShDescriptor):
+    """A subclass writing its text with `ShDescriptor`'s own `str`."""
+
+
+class _PlainWsh(WshDescriptor):
+    """A subclass writing its text with `WshDescriptor`'s own `str`."""
+
+
+class _ShAndWsh(ShDescriptor, WshDescriptor):
+    """Both, writing its text with `ShDescriptor`'s own `str`."""
+
+
+def _unpickled_holding(
+    cls: type[ShDescriptor | WshDescriptor], inner: Descriptor
+) -> Descriptor:
+    """Return a `cls` holding `inner`, unpickled, as `_unpickled_wsh` does."""
+    built = cls(PkDescriptor(_C_KEY))
+    outer: Descriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(outer, "inner", inner)
+    return outer
+
+
+def _keyless_pk_k() -> Descriptor:
+    """Return ``and_v(v:pk(KEY),pk())``, unpickled, its second key removed."""
+    ms = _unpickled_and_v_pk(_C_KEY, _C_KEY)
+    assert isinstance(ms, MiniscriptDescriptor)
+    object.__setattr__(ms.node.subs[1].subs[0], "keys", ())
+    return ms
+
+
+def test_a_pk_k_of_no_key_raises_when_written_out() -> None:
+    """The control of the keyless case: `str` cannot write it out."""
+    with pytest.raises(IndexError, match="^tuple index out of range$"):
+        str(_keyless_pk_k())
+
+
+@pytest.mark.parametrize(
+    "wrapper,inner,refusal",
+    [
+        (
+            WshDescriptor,
+            _unpickled_holding(ShDescriptor, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_wsh(_keyless_pk_k()),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_wsh(_unpickled_wsh(_keyless_pk_k())),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_wsh(_unpickled_holding(ShDescriptor, _keyless_pk_k())),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_holding(ShDescriptor, _keyless_pk_k()),
+            "sh() is not allowed inside sh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_PlainSh, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_PlainWsh, _keyless_pk_k()),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_holding(_PlainSh, _keyless_pk_k()),
+            "sh() is not allowed inside sh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_ShAndWsh, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+    ],
+    ids=[
+        "wsh-sh",
+        "wsh-wsh",
+        "sh-wsh-wsh",
+        "sh-wsh-sh",
+        "sh-sh",
+        "wsh-subclass-sh",
+        "wsh-subclass-wsh",
+        "sh-subclass-sh",
+        "wsh-sh-and-wsh",
+    ],
+)
+def test_an_unpickled_sh_or_wsh_is_refused_by_position_without_its_text(
+    wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
+) -> None:
+    """Refused by position, though what it holds writes no text.
+
+    Directly or by `replace`. Issue btclib-org/bip32-descriptors#269.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(inner)
+    parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+def test_an_sh_that_is_a_wsh_too_is_refused_for_its_argument_inside_sh() -> None:
+    """As `ShDescriptor` refuses the argument of a ``wsh()`` argument, first."""
+    inner = _unpickled_holding(_ShAndWsh, _keyless_pk_k())
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+        ShDescriptor(inner)
+
+
+class _BorrowSh(PkDescriptor):
+    """A ``pk()`` borrowing `ShDescriptor`'s `str`, holding no argument."""
+
+    __str__ = ShDescriptor.__str__
+
+
+class _BorrowWsh(PkDescriptor):
+    """A ``pk()`` borrowing `WshDescriptor`'s `str`, holding no argument."""
+
+    __str__ = WshDescriptor.__str__
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS, ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("cls", [_BorrowSh, _BorrowWsh], ids=lambda cls: cls.__name__)
+def test_a_class_borrowing_the_str_of_sh_or_wsh_is_named_by_its_text(
+    cls: type[PkDescriptor], wrapper: type[ShDescriptor | WshDescriptor]
+) -> None:
+    """Not by the `str` it borrows: writing its text raises, as it would."""
+    err_msg = f"^'{cls.__name__}' object has no attribute 'inner'$"
+    with pytest.raises(AttributeError, match=err_msg):
+        wrapper(cls(_C_KEY))
 
 
 @pytest.mark.parametrize(
