@@ -293,6 +293,20 @@ def _multisig_context_fault(fragment: str) -> str:
     return "multi_a() is only allowed in a tapscript"
 
 
+def _assert_key_number(fragment: str, keys: int) -> None:
+    """Refuse a number of keys the fragment does not take."""
+    if fragment in {"pk_k", "pk_h"}:
+        allowed = keys == 1
+    elif fragment == "multi":
+        allowed = 1 <= keys <= MAX_PUBKEYS_PER_MULTISIG
+    elif fragment == "multi_a":
+        allowed = 1 <= keys <= _MAX_PUBKEYS_PER_MULTI_A
+    else:
+        allowed = keys == 0
+    if not allowed:
+        raise BTClibValueError(f"invalid number of keys in {fragment}: {keys}")
+
+
 def _t(properties: str) -> frozenset[str]:
     """Return a set of type properties, one character each."""
     return frozenset(properties)
@@ -1242,16 +1256,7 @@ class Miniscript:
             if self.context == P2WSH:
                 _assert_outside_taproot(key)
             _assert_compressed(key)
-        if fragment in {"pk_k", "pk_h"}:
-            allowed = keys == 1
-        elif fragment == "multi":
-            allowed = 1 <= keys <= MAX_PUBKEYS_PER_MULTISIG
-        elif fragment == "multi_a":
-            allowed = 1 <= keys <= _MAX_PUBKEYS_PER_MULTI_A
-        else:
-            allowed = keys == 0
-        if not allowed:
-            raise BTClibValueError(f"invalid number of keys in {fragment}: {keys}")
+        _assert_key_number(fragment, keys)
 
     def _assert_number(self) -> None:
         """Refuse a lock time or a threshold not an integer or out of bounds."""
