@@ -245,6 +245,7 @@ from bip32_descriptors.descriptors.miniscript import (
     Miniscript,
     Preimages,
     SpendContext,
+    _assert_arity,
     _assert_fragment_type,
     _assert_key_number,
     _assert_sane,
@@ -828,7 +829,8 @@ def _tapscript_node(node: object) -> Miniscript:
     does, holds any value as a subexpression, a context or a fragment, so
     only the library's own context is named, a refusal echoing no value
     it holds. Once its context passes, its fragment is refused as
-    `_assert_fragment_type` says.
+    `_assert_fragment_type` says, and its number of subexpressions as
+    `_assert_arity` says.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -838,6 +840,8 @@ def _tapscript_node(node: object) -> Miniscript:
         err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
         raise BTClibValueError(err_msg)
     _assert_fragment_type(node.fragment)
+    if node.fragment == "thresh" or node.fragment in _ARITY:
+        _assert_arity(node.fragment, len(node.subs))
     return node
 
 
@@ -2025,8 +2029,9 @@ def _assert_p2wsh(node: Miniscript) -> None:
     fragments are named.
 
     A node is refused first where it is no `Miniscript`, and, once its
-    context passes, where `_assert_fragment_type` refuses its fragment,
-    before its keys are read.
+    context passes, where `_assert_fragment_type` refuses its fragment
+    and `_assert_arity` its number of subexpressions, before its keys are
+    read.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.
@@ -2042,6 +2047,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
         _assert_fragment_type(sub.fragment)
+        if sub.fragment == "thresh" or sub.fragment in _ARITY:
+            _assert_arity(sub.fragment, len(sub.subs))
         _assert_key_types(sub)
         stack += sub.subs
 

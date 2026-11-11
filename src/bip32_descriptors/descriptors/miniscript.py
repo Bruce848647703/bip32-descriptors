@@ -305,6 +305,19 @@ def _multisig_context_fault(fragment: str) -> str:
     return "multi_a() is only allowed in a tapscript"
 
 
+def _assert_arity(fragment: str, count: int) -> None:
+    """Refuse a number of subexpressions the fragment does not take."""
+    if fragment == "thresh":
+        if count == 0:
+            raise BTClibValueError("thresh() takes at least one subexpression")
+    elif fragment not in _ARITY:
+        raise BTClibValueError("unknown miniscript fragment")
+    elif count != _ARITY[fragment]:
+        raise BTClibValueError(
+            f"{fragment} takes {_ARITY[fragment]} subexpressions, {count} given"
+        )
+
+
 def _assert_key_number(fragment: str, keys: int) -> None:
     """Refuse a number of keys the fragment does not take."""
     if fragment in {"pk_k", "pk_h"}:
@@ -1217,17 +1230,7 @@ class Miniscript:
             raise BTClibValueError(err_msg)
         fragment = self.fragment
         _assert_fragment_type(fragment)
-        if fragment == "thresh":
-            if not self.subs:
-                raise BTClibValueError("thresh() takes at least one subexpression")
-        elif fragment not in _ARITY:
-            raise BTClibValueError("unknown miniscript fragment")
-        elif len(self.subs) != _ARITY[fragment]:
-            err_msg = (
-                f"{fragment} takes {_ARITY[fragment]} subexpressions, "
-                f"{len(self.subs)} given"
-            )
-            raise BTClibValueError(err_msg)
+        _assert_arity(fragment, len(self.subs))
         # each node writes its keys in its own context, so a subexpression
         # of the other one would put keys of the wrong size in the script
         if any(sub.context != self.context for sub in self.subs):

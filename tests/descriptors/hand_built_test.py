@@ -74,6 +74,10 @@ the message `parse` gives inside ``sh()``: more than three keys, one of
 them uncompressed, whose redeem script is over the push limit of
 ``sh()``. Issue btclib-org/bip32-descriptors#251.
 
+`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor` and `ShDescriptor`
+refuse an unpickled node whose number of subexpressions its fragment does
+not take, before writing its text. Issue btclib-org/bip32-descriptors#275.
+
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
 Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
@@ -3247,6 +3251,38 @@ def test_a_node_holding_a_number_of_keys_its_fragment_does_not_take_is_refused(
     with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
         replace(node, keys=keys)
     with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+        wrap(root)
+
+
+def test_an_unpickled_unknown_fragment_is_left_to_its_key_count() -> None:
+    """The arity rule only names fragments the library defines."""
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({_C}),older(1))", _P2WSH))
+    object.__setattr__(root.subs[1], "fragment", _RANDOM_HEX)
+    object.__setattr__(root.subs[1], "keys", (_C_KEYS[0],))
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in a node: 1$"):
+        WshDescriptor(MiniscriptDescriptor(root))
+
+
+def test_an_unpickled_thresh_without_subexpressions_is_refused() -> None:
+    """Refused by the arity rule before the walk reads its subexpressions."""
+    root = _unpickled(miniscript.parse(f"thresh(1,pk({_C}))", _P2WSH))
+    object.__setattr__(root, "subs", ())
+    with pytest.raises(
+        BTClibValueError, match="^thresh\\(\\) takes at least one subexpression$"
+    ):
+        WshDescriptor(MiniscriptDescriptor(root))
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_of_the_wrong_arity_is_refused(wrapped: str) -> None:
+    """Refused before any text is written. Issue #275."""
+    context, wrap = _WRAPPED[wrapped]
+    key = _X if context == _TAPSCRIPT else _C
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({key}),pk({key}))", context))
+    object.__setattr__(root, "subs", root.subs[:1])
+    with pytest.raises(
+        BTClibValueError, match="^and_v takes 2 subexpressions, 1 given$"
+    ):
         wrap(root)
 
 
