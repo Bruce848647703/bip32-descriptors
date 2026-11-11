@@ -755,8 +755,23 @@ def _named_fragment(node: Miniscript) -> str:
     can be any value, and a refusal names only the library's own.
     """
     fragment = node.fragment
-    known = type(fragment) is str and (fragment == "thresh" or fragment in _ARITY)
-    return fragment if known else "a node"
+    return fragment if _is_known_fragment(fragment) else "a node"
+
+
+def _is_known_fragment(fragment: object) -> bool:
+    """Say whether the fragment is a `str` the library defines."""
+    return type(fragment) is str and (fragment == "thresh" or fragment in _ARITY)
+
+
+def _assert_known_fragment(node: Miniscript) -> None:
+    """Refuse a node whose fragment the library does not define.
+
+    `Miniscript` refuses it when it is built, but an unpickled node skips
+    that check, and its text is one `parse` refuses. The fragment is any
+    value, so the refusal echoes none.
+    """
+    if not _is_known_fragment(node.fragment):
+        raise BTClibValueError("unknown miniscript fragment")
 
 
 def _assert_key_numbers(
@@ -769,7 +784,7 @@ def _assert_key_numbers(
     hold, and in ``tr()`` those of its other leaves. An unpickled node
     skips `Miniscript`'s own check, and the text of a ``pk_k`` or
     ``pk_h`` reads only its first key. A fragment the library does not
-    define is named "a node", and taken to hold no key.
+    define is refused by that walk first.
 
     Such a node is refused for a multisig outside its context, as its
     build refuses it. Otherwise, where `keys` hold an uncompressed one,
@@ -795,7 +810,7 @@ def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
 
     `uncompressed` says whether the descriptor holds an uncompressed key.
     """
-    fragment = _named_fragment(node)
+    fragment = node.fragment
     try:
         _assert_key_number(fragment, len(node.keys))
     except BTClibValueError:
@@ -830,7 +845,8 @@ def _tapscript_node(node: object) -> Miniscript:
     does, holds any value as a subexpression, a context or a fragment, so
     only the library's own context is named, a refusal echoing no value
     it holds. Once its context passes, its fragment is refused as
-    `_assert_fragment_type` says.
+    `_assert_fragment_type` says, and then as `_assert_known_fragment`
+    says.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -840,6 +856,7 @@ def _tapscript_node(node: object) -> Miniscript:
         err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
         raise BTClibValueError(err_msg)
     _assert_fragment_type(node.fragment)
+    _assert_known_fragment(node)
     return node
 
 
@@ -2035,7 +2052,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
 
     A node is refused first where it is no `Miniscript`, and, once its
     context passes, where `_assert_fragment_type` refuses its fragment,
-    before its keys are read.
+    and then where `_assert_known_fragment` does, before its keys are
+    read.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.
@@ -2051,6 +2069,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
         _assert_fragment_type(sub.fragment)
+        _assert_known_fragment(sub)
         _assert_key_types(sub)
         stack += sub.subs
 
