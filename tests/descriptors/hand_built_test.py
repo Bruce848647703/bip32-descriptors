@@ -1219,6 +1219,18 @@ def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
     return multi
 
 
+def _unpickled_wpkh(key: KeyExpression) -> Descriptor:
+    """Return ``wpkh(KEY)``, unpickled.
+
+    `WpkhDescriptor` refuses an uncompressed key when built, and
+    unpickling skips that check, so the key is given to an unpickled copy.
+    """
+    parsed = _PARSED[WpkhDescriptor]
+    wpkh: WpkhDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(wpkh, "key", key)
+    return wpkh
+
+
 def _unpickled_pk(key: KeyExpression) -> Descriptor:
     """Return ``pk(KEY)``, unpickled.
 
@@ -1287,6 +1299,7 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
         _unpickled_multi(_KEYS),
         "multi() takes at most 20 keys, 21 given",
     ),
+    (ShDescriptor, _unpickled_wpkh(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
     (
         ShDescriptor,
         _unpickled_multi(_KEYS),
@@ -1353,6 +1366,7 @@ _REFUSED_INSIDE_IDS = [
     "wsh-sortedmulti",
     "wsh-miniscript",
     "wsh-21-keys",
+    "sh-wpkh",
     "sh-21-keys",
     "wsh-no-keys",
     "sh-no-keys",

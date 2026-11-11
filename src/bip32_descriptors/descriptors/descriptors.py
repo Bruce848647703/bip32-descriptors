@@ -1719,9 +1719,10 @@ class ShDescriptor(Descriptor):
 
     An argument `parse` refuses inside ``sh()`` by its function, by a
     key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key of a
-    ``wsh()`` argument, by the size of its script or by the number of
-    keys of a ``multi()`` is refused when built, with `parse`'s message,
-    unless the argument is invalid by itself, as `Descriptor` says.
+    ``wsh()`` or ``wpkh()`` argument, by the size of its script or by the
+    number of keys of a ``multi()`` is refused when built, with `parse`'s
+    message, unless the argument is invalid by itself, as `Descriptor`
+    says.
     """
 
     inner: Descriptor
@@ -2824,8 +2825,14 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     Inside ``sh()``, the keys of a ``wsh()`` argument are refused
     uncompressed too, because `parse` reads them in the ``wsh()``
     context: an unpickled ``wsh()`` skips its own check of them.
+
+    The key of a ``wpkh()`` argument is refused uncompressed in any
+    context, because `parse` reads it compressed only: an unpickled
+    ``wpkh()`` skips its own check of it.
     """
-    no_uncompressed = _no_uncompressed(context) or isinstance(inner, WshDescriptor)
+    no_uncompressed = _no_uncompressed(context) or isinstance(
+        inner, (WshDescriptor, WpkhDescriptor)
+    )
 
     def check(key: KeyExpression) -> None:
         _assert_outside_taproot(key)
