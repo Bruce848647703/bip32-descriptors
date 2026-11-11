@@ -491,10 +491,15 @@ class MultiA:
     sort: bool = False
 
     def __post_init__(self) -> None:
-        """Refuse a field of the wrong type, and a k or an n `parse` refuses.
+        """Refuse a field of the wrong type, and a key, k or n `parse` refuses.
 
         A threshold of none or of more keys than there are, or more keys
         than BIP387 allows, describes a script nobody can spend.
+
+        An uncompressed key is refused first, as `parse` reads the keys
+        before it counts them. Its message is `parse`'s without the
+        ``key N:`` that names the key's position in the ``tr()``, which a
+        leaf does not know.
         """
         if not is_integer(self.threshold):
             err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
@@ -503,6 +508,8 @@ class MultiA:
         for key in self.keys:
             assert_type(key, KeyExpression, "key")
         assert_type(self.sort, bool, "sort")
+        for key in self.keys:
+            _assert_compressed(key)
         name = "sortedmulti_a" if self.sort else "multi_a"
         if not 1 <= self.threshold <= len(self.keys):
             raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
@@ -1536,13 +1543,18 @@ def _assert_keys(
 ) -> None:
     """Refuse a key `check` refuses, with `parse`'s message.
 
-    The message names the key by its index in `keys`.
+    The message names the key by its position, counted as `_parse_key`
+    counts it: a ``musig()`` takes one position for each participant and
+    one for itself, and a key refused for itself is named by the first
+    of its positions, where `parse` refuses it.
     """
-    for position, key in enumerate(keys):
+    position = 0
+    for key in keys:
         try:
             check(key)
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
+        position += len(key.participants) + 1
 
 
 def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
@@ -2347,7 +2359,17 @@ def _control_block(x_only: bytes, parity: int, leaf: _TreeLeaf) -> bytes:
 
 @dataclass(frozen=True)
 class TrDescriptor(Descriptor):
-    """``tr(KEY)`` or ``tr(KEY,TREE)``: a p2tr output, BIP386."""
+    """``tr(KEY)`` or ``tr(KEY,TREE)``: a p2tr output, BIP386.
+
+    An uncompressed key is refused when built, with `parse`'s message.
+    The internal key is refused before the tree, as `parse` reads them,
+    and a leaf key once the tree passes its other checks: its shape, its
+    nodes' context, its leaves' text and their sanity. `parse` refuses
+    instead whichever fault it reads first. A `MultiA` leaf and a
+    tapscript `Miniscript` node refuse one when they are built, before
+    the ``tr()`` that holds them, and their message lacks the ``key N:``
+    that names the key's position in the ``tr()``.
+    """
 
     internal_key: KeyExpression
     tree: DescriptorTree | None = None
@@ -2356,8 +2378,12 @@ class TrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.internal_key, KeyExpression, "internal key")
+        _assert_keys((self.internal_key,), _assert_compressed)
         if self.tree is not None:
             _assert_tree(self.tree)
+            # a pk() leaf is a bare key, and an unpickled leaf skipped its
+            # own check
+            _assert_keys(self.key_expressions, _assert_compressed)
 
     @override
     def __str__(self) -> str:
@@ -2607,6 +2633,8 @@ class RawTrDescriptor(Descriptor):
     it is. That is the whole difference from ``tr(KEY)``, which tweaks its
     internal key with an empty merkle root, and it is why this is not a
     `TrDescriptor` carrying ``tree=None``.
+
+    An uncompressed key is refused when built, with `parse`'s message.
     """
 
     key: KeyExpression
@@ -2615,6 +2643,7 @@ class RawTrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
+        _assert_keys((self.key,), _assert_compressed)
 
     @override
     def __str__(self) -> str:
@@ -2783,8 +2812,9 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
 
     An uncompressed key, the number of keys of a ``multi()``, and the
     size of its script, in `parse`'s order and with its messages.
-    ``sh()`` and ``wsh()`` hold no key of their own, so a key's index in
-    `inner` is the position `parse` names.
+    ``sh()`` and ``wsh()`` hold no key of their own, so a key's
+    position in `inner`, counted as `_assert_keys` counts it, is the one
+    `parse` names.
     """
     if _no_uncompressed(context):
         _assert_keys(inner.key_expressions, _assert_compressed)

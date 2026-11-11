@@ -44,6 +44,11 @@ btclib-org/bip32-descriptors#175.
 key, `MultiDescriptor` no keys, more than 20 keys and a k outside 1 to
 n, and `RawPkhDescriptor` an empty hash and one of other than 20 bytes,
 each with `parse`'s message. Issue btclib-org/bip32-descriptors#200.
+
+`TrDescriptor` and `RawTrDescriptor` refuse an uncompressed key with
+`parse`'s message. A `MultiA` and a tapscript `Miniscript` node refuse
+one too, without the key's position in the ``tr()`` that `parse`
+names. Issue btclib-org/bip32-descriptors#221.
 """
 
 from __future__ import annotations
@@ -1827,13 +1832,21 @@ def test_a_rawpkh_hash_of_other_than_20_bytes_is_refused_when_built(
         unpickled.script_pub_key()
 
 
+_TAPSCRIPT = miniscript.TAPSCRIPT
+
+
 @pytest.mark.parametrize(
-    "fragment,keys,threshold",
-    [("pk_k", (_U_KEY,), 0), ("multi", (_C_KEY, _U_KEY), 1)],
-    ids=["pk_k", "multi"],
+    "context,fragment,keys,threshold",
+    [
+        (_P2WSH, "pk_k", (_U_KEY,), 0),
+        (_P2WSH, "multi", (_C_KEY, _U_KEY), 1),
+        (_TAPSCRIPT, "pk_k", (_U_KEY,), 0),
+        (_TAPSCRIPT, "multi_a", (_KEY2, _U_KEY), 1),
+    ],
+    ids=["p2wsh-pk_k", "p2wsh-multi", "tapscript-pk_k", "tapscript-multi_a"],
 )
-def test_an_uncompressed_key_in_a_p2wsh_miniscript_node_is_refused_when_built(
-    fragment: str, keys: tuple[KeyExpression, ...], threshold: int
+def test_an_uncompressed_key_in_a_miniscript_node_is_refused_when_built(
+    context: str, fragment: str, keys: tuple[KeyExpression, ...], threshold: int
 ) -> None:
     """Built directly or by `replace`, with the message `parse` gives."""
     text = ",".join(map(str, keys))
@@ -1841,25 +1854,169 @@ def test_an_uncompressed_key_in_a_p2wsh_miniscript_node_is_refused_when_built(
         text = f"{threshold},{text}"
     err_msg = f"^{_UNCOMPRESSED_HERE}$"
     with pytest.raises(BTClibValueError, match=err_msg):
-        miniscript.parse(f"{fragment}({text})", _P2WSH)
+        miniscript.parse(f"{fragment}({text})", context)
     with pytest.raises(BTClibValueError, match=err_msg):
-        miniscript.Miniscript(fragment, _P2WSH, keys=keys, threshold=threshold)
+        miniscript.Miniscript(fragment, context, keys=keys, threshold=threshold)
     built = miniscript.Miniscript(
-        fragment, _P2WSH, keys=_KEYS[: len(keys)], threshold=threshold
+        fragment, context, keys=_KEYS[: len(keys)], threshold=threshold
     )
     with pytest.raises(BTClibValueError, match=err_msg):
         replace(built, keys=keys)
 
 
-@pytest.mark.parametrize("position", [0, 20])
+@pytest.mark.parametrize("last", [False, True], ids=["first", "last"])
+@pytest.mark.parametrize(
+    "context,fragment,at_limit",
+    [(_P2WSH, "multi", _KEYS[:20]), (_TAPSCRIPT, "multi_a", (_KEY2,) * 999)],
+    ids=["p2wsh-multi", "tapscript-multi_a"],
+)
 def test_an_uncompressed_key_is_refused_before_the_number_of_keys(
-    position: int,
+    context: str, fragment: str, at_limit: tuple[KeyExpression, ...], last: bool
 ) -> None:
-    """In a P2WSH ``multi`` node of 21 keys, as `miniscript.parse` reads it."""
-    keys = list(_KEYS[:20])
-    keys.insert(position, _U_KEY)
+    """In a node of one key over its limit, as `miniscript.parse` reads it."""
+    keys = list(at_limit)
+    keys.insert(len(keys) if last else 0, _U_KEY)
     err_msg = f"^{_UNCOMPRESSED_HERE}$"
     with pytest.raises(BTClibValueError, match=err_msg):
-        miniscript.parse(f"multi(1,{','.join(map(str, keys))})", _P2WSH)
+        miniscript.parse(f"{fragment}(1,{','.join(map(str, keys))})", context)
     with pytest.raises(BTClibValueError, match=err_msg):
-        miniscript.Miniscript("multi", _P2WSH, keys=tuple(keys), threshold=1)
+        miniscript.Miniscript(fragment, context, keys=tuple(keys), threshold=1)
+
+
+def _unpickled_multi_a(keys: tuple[KeyExpression, ...]) -> MultiA:
+    """Return ``multi_a(1,KEY,...)``, unpickled.
+
+    `MultiA` refuses an uncompressed key when built, and unpickling skips
+    that check, so the keys are given to an unpickled copy.
+    """
+    multi_a: MultiA = pickle.loads(pickle.dumps(MultiA(1, (_KEY2,))))  # noqa: S301
+    object.__setattr__(multi_a, "keys", keys)
+    return multi_a
+
+
+def _tapscript_and_v_older(key: KeyExpression) -> miniscript.Miniscript:
+    """Return the tapscript ``and_v(v:pk(KEY),older(1))``, unpickled.
+
+    A tapscript `Miniscript` node refuses an uncompressed key when built,
+    and unpickling skips that check, so the key is given to an unpickled
+    copy.
+    """
+    expression = f"and_v(v:pk({_X2}),older(1))"
+    node = _unpickled(miniscript.parse(expression, _TAPSCRIPT))
+    object.__setattr__(node.subs[0].subs[0].subs[0], "keys", (key,))
+    return node
+
+
+@pytest.mark.parametrize(
+    "internal_key,tree,text,position",
+    [
+        (_U_KEY, None, f"tr({_U_KEY})", 0),
+        (_KEY, _U_KEY, f"tr({_X},pk({_U_KEY}))", 1),
+        (_KEY, (_KEY2, _U_KEY), f"tr({_X},{{pk({_X2}),pk({_U_KEY})}})", 2),
+        (
+            _KEY,
+            _unpickled_multi_a((_KEY2, _U_KEY)),
+            f"tr({_X},multi_a(1,{_X2},{_U_KEY}))",
+            2,
+        ),
+        (
+            _KEY,
+            _tapscript_and_v_older(_U_KEY),
+            f"tr({_X},and_v(v:pk({_U_KEY}),older(1)))",
+            1,
+        ),
+        (_MUSIG, _U_KEY, f"tr({_MUSIG},pk({_U_KEY}))", 3),
+        (_KEY, (_MUSIG, _U_KEY), f"tr({_X},{{pk({_MUSIG}),pk({_U_KEY})}})", 4),
+        (
+            _KEY,
+            (_MUSIG, _unpickled_multi_a((_KEY2, _U_KEY))),
+            f"tr({_X},{{pk({_MUSIG}),multi_a(1,{_X2},{_U_KEY})}})",
+            5,
+        ),
+    ],
+    ids=[
+        "internal",
+        "pk-leaf",
+        "second-leaf",
+        "multi_a-leaf",
+        "miniscript-leaf",
+        "after-musig-internal",
+        "after-musig-leaf",
+        "multi_a-after-musig-leaf",
+    ],
+)
+def test_an_uncompressed_tr_key_is_refused_when_built(
+    internal_key: KeyExpression, tree: Any, text: str, position: int
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    The position counts a ``musig()`` as each of its participants and
+    itself, as `parse` does. A leaf that refuses the key itself when
+    built is given it unpickled.
+    """
+    err_msg = f"^key {position}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(internal_key, tree)
+    parsed = cast("TrDescriptor", _PARSED[TrDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, internal_key=internal_key, tree=tree)
+
+
+def test_an_uncompressed_internal_key_is_refused_before_the_tree() -> None:
+    """As `parse` reads them, before a tree deeper than `parse` reads."""
+    levels = 129
+    text = f"{{pk({_X2})," * levels + f"pk({_X2})" + "}" * levels
+    tree: Any = _KEY2
+    for _ in range(levels):
+        tree = (_KEY2, tree)
+    err_msg = r"^tr\(\) supports at most 128 nesting levels$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},{text})")
+    with pytest.raises(BTClibValueError, match="^script tree deeper than 128$"):
+        TrDescriptor(_KEY, tree)
+    err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_U_KEY},{text})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(_U_KEY, tree)
+
+
+@pytest.mark.parametrize(
+    "threshold,keys",
+    [(1, (_KEY2, _U_KEY)), (3, (_KEY2, _U_KEY)), (1, (*(_KEY2,) * 999, _U_KEY))],
+    ids=["k-1", "k-over-n", "n-over-999"],
+)
+@pytest.mark.parametrize("sort", [False, True], ids=["multi_a", "sortedmulti_a"])
+def test_an_uncompressed_multi_a_key_is_refused_when_built(
+    threshold: int, keys: tuple[KeyExpression, ...], sort: bool
+) -> None:
+    """Built directly or by `replace`, before k and n, as `parse` reads them.
+
+    The message is `parse`'s without the key's position in the ``tr()``,
+    which the leaf does not know.
+    """
+    name = "sortedmulti_a" if sort else "multi_a"
+    arguments = ",".join([str(threshold), *map(str, keys)])
+    err_msg = f"^key {len(keys)}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},{name}({arguments}))")
+    err_msg = f"^{_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MultiA(threshold, keys, sort=sort)
+    built = MultiA(1, (_KEY2,), sort=sort)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(built, threshold=threshold, keys=keys)
+
+
+def test_an_uncompressed_rawtr_key_is_refused_when_built() -> None:
+    """Built directly or by `replace`, with the message `parse` gives."""
+    err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"rawtr({_U_KEY})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawTrDescriptor(_U_KEY)
+    parsed = cast("RawTrDescriptor", _PARSED[RawTrDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, key=_U_KEY)

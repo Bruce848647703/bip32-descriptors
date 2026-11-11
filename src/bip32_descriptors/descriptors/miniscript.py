@@ -1219,10 +1219,11 @@ class Miniscript:
     def _assert_keys(self) -> None:
         """Refuse the keys no fragment holds, and the ones a context forbids.
 
-        A P2WSH node refuses a ``musig()`` key, an x-only one and an
-        uncompressed one, with `parse`'s message, since its text would not
-        parse back. A ``musig()`` key would also want an ECDSA signature,
-        which a MuSig2 group does not make (BIP327).
+        A node of either context refuses an uncompressed key, and a P2WSH
+        node a ``musig()`` key and an x-only one, with `parse`'s message,
+        since its text would not parse back. A ``musig()`` key would also
+        want an ECDSA signature, which a MuSig2 group does not make
+        (BIP327).
         """
         assert_type(self.keys, tuple, "keys")
         for key in self.keys:
@@ -1233,14 +1234,14 @@ class Miniscript:
             self.context == TAPSCRIPT
         ):
             raise BTClibValueError(_multisig_context_fault(fragment))
-        # a key P2WSH refuses, before the number of keys: `parse` reads the
-        # keys of a fragment that takes them before it counts them. A
-        # fragment that takes none and holds such a key is refused for the
-        # key too
-        if self.context == P2WSH:
-            for key in self.keys:
+        # a key the context refuses, before the number of keys: `parse`
+        # reads the keys of a fragment that takes them before it counts
+        # them. A fragment that takes none and holds such a key is refused
+        # for the key too
+        for key in self.keys:
+            if self.context == P2WSH:
                 _assert_outside_taproot(key)
-                _assert_compressed(key)
+            _assert_compressed(key)
         if fragment in {"pk_k", "pk_h"}:
             allowed = keys == 1
         elif fragment == "multi":
