@@ -41,6 +41,11 @@ btclib-org/bip32-descriptors#181.
 ``multi()`` keys `parse` refuses there. Issues
 btclib-org/bip32-descriptors#175 and btclib-org/bip32-descriptors#233.
 
+`ShDescriptor` refuses the argument of a ``wsh()`` argument as
+`WshDescriptor` refuses it, a value of the wrong type included, and by
+its function before its keys, as `parse` does. Issue
+btclib-org/bip32-descriptors#242.
+
 `WpkhDescriptor` and a P2WSH `Miniscript` node refuse an uncompressed
 key, `MultiDescriptor` no keys, more than 20 keys and a k outside 1 to
 n, and `RawPkhDescriptor` an empty hash and one of other than 20 bytes,
@@ -87,6 +92,7 @@ import pytest
 from btclib import b58
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
+from btclib.script.limits import MAX_SCRIPT_SIZE
 from ecc.exceptions import EccValueError
 from typing_extensions import override
 
@@ -1290,6 +1296,13 @@ def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
     return multi
 
 
+def _unpickled_sortedmulti(keys: tuple[KeyExpression, ...]) -> Descriptor:
+    """Return ``sortedmulti(1,KEY,...)``, as `_unpickled_multi` does."""
+    multi = _unpickled_multi(keys)
+    object.__setattr__(multi, "sort", True)
+    return multi
+
+
 def _unpickled_wpkh(key: KeyExpression) -> Descriptor:
     """Return ``wpkh(KEY)``, unpickled.
 
@@ -1333,9 +1346,10 @@ def _unpickled_and_v_pk(first: KeyExpression, second: KeyExpression) -> Descript
 def _unpickled_wsh(inner: Descriptor) -> Descriptor:
     """Return ``wsh(INNER)``, unpickled.
 
-    `WshDescriptor` refuses the keys of an argument `parse` refuses
-    inside ``wsh()`` when built, and unpickling skips that check, so the
-    argument is given to an unpickled copy.
+    `WshDescriptor` refuses an argument `parse` refuses inside ``wsh()``
+    when built, unless the argument is invalid by itself, as `Descriptor`
+    says. Unpickling skips that check, so the argument is given to an
+    unpickled copy.
     """
     parsed = _PARSED[WshDescriptor]
     wsh: WshDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -1429,6 +1443,59 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
             (_unpickled_and_v_pk(_U_KEY, _KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
         )
     ),
+    *(
+        (ShDescriptor, _unpickled_wsh(inner), f"key 0: {refusal}")
+        for key, refusal in ((_MUSIG, _MUSIG_HERE), (_KEY, _X_ONLY_HERE))
+        for inner in (_unpickled_multi((key,)), _unpickled_pk(key))
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WshDescriptor]),
+        "wsh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WpkhDescriptor]),
+        "wpkh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_multi(_KEYS)),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(PkDescriptor(_U_KEY)),
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_wsh(PkDescriptor(_U_KEY))),
+        "wsh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_wpkh(_U_KEY)),
+        "wpkh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_multi(())),
+        "multi() takes a threshold and at least one key",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_sortedmulti(())),
+        "sortedmulti() takes a threshold and at least one key",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1))),
+        (
+            f"raw() inside wsh() is {MAX_SCRIPT_SIZE + 1} bytes,"
+            f" over the {MAX_SCRIPT_SIZE}-byte limit"
+        ),
+    ),
 ]
 _REFUSED_INSIDE_IDS = [
     "wsh-pk",
@@ -1458,20 +1525,34 @@ _REFUSED_INSIDE_IDS = [
     "sh-wsh-compressed-uncompressed-musig",
     "sh-wsh-miniscript-uncompressed-then-musig",
     "sh-wsh-miniscript-uncompressed-then-x-only",
+    *(
+        f"sh-wsh-{inner}-{key}"
+        for key in _TAPROOT_ONLY_IDS
+        for inner in ("multi", "pk")
+    ),
+    "sh-wsh-wsh",
+    "sh-wsh-wpkh",
+    "sh-wsh-21-keys",
+    "sh-wsh-uncompressed",
+    "sh-wsh-wsh-uncompressed",
+    "sh-wsh-wpkh-uncompressed",
+    "sh-wsh-no-keys",
+    "sh-wsh-sortedmulti-no-keys",
+    "sh-wsh-raw-over-the-limit",
 ]
 
 
 @pytest.mark.parametrize(
     "wrapper,inner,refusal", _REFUSED_INSIDE, ids=_REFUSED_INSIDE_IDS
 )
-def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
+def test_what_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
     wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
 ) -> None:
     """Built directly or by `replace`, with the message `parse` gives.
 
-    A ``raw()`` over the size limit is tried in `raw_descriptors_test`.
-    Issues btclib-org/bip32-descriptors#175 and
-    btclib-org/bip32-descriptors#233.
+    A ``raw()`` over the size limit, directly inside either, is tried in
+    `raw_descriptors_test`. Issues btclib-org/bip32-descriptors#175,
+    btclib-org/bip32-descriptors#233 and btclib-org/bip32-descriptors#242.
     """
     err_msg = f"^{re.escape(refusal)}$"
     with pytest.raises(BTClibValueError, match=err_msg):
@@ -1480,6 +1561,43 @@ def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
         wrapper(inner)
     parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
     with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+class _NoText:
+    """A value whose `str` raises."""
+
+    @override
+    def __str__(self) -> str:
+        raise RuntimeError("no text")
+
+
+def test_a_value_with_no_text_raises_when_written_out() -> None:
+    """The control of the no-text case: `str` cannot write `_NoText` out."""
+    with pytest.raises(RuntimeError, match="^no text$"):
+        str(_NoText())
+
+
+@pytest.mark.parametrize(
+    "value",
+    [5, None, f"pk({_C})", _NoText()],
+    ids=["int", "none", "str", "no-text"],
+)
+def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
+    value: Any,
+) -> None:
+    """Refused with `WshDescriptor`'s type error, directly or by `replace`.
+
+    Issue btclib-org/bip32-descriptors#242.
+    """
+    err_msg = f"^invalid inner descriptor type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        WshDescriptor(value)
+    inner = _unpickled_wsh(value)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        ShDescriptor(inner)
+    parsed = cast("ShDescriptor", _PARSED[ShDescriptor])
+    with pytest.raises(BTClibTypeError, match=err_msg):
         replace(parsed, inner=inner)
 
 

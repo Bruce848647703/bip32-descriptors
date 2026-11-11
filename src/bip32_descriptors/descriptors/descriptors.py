@@ -1798,10 +1798,14 @@ class ShDescriptor(Descriptor):
 
     An argument `parse` refuses inside ``sh()`` by its function, by a
     key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key of a
-    ``wsh()`` or ``wpkh()`` argument, by the size of its script or by the
-    number of keys of a ``multi()`` is refused when built, with `parse`'s
-    message, unless the argument is invalid by itself, as `Descriptor`
-    says.
+    ``wpkh()`` argument, by the size of its script or by the number of
+    keys of a ``multi()`` is refused when built, with `parse`'s message,
+    unless the argument is invalid by itself, as `Descriptor` says.
+
+    The argument of a ``wsh()`` argument is refused as `WshDescriptor`
+    refuses it, a value of the wrong type included, and its function
+    before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
+    that check of its own.
     """
 
     inner: Descriptor
@@ -1810,7 +1814,14 @@ class ShDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        if isinstance(self.inner, WshDescriptor):
+            # before anything writes the argument out: a value of the wrong
+            # type need not write itself without raising
+            assert_type(self.inner.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2SH)
+        if isinstance(self.inner, WshDescriptor):
+            _assert_inner(self.inner.inner, _P2WSH)
+            _assert_embedded(self.inner.inner, _P2WSH)
         _assert_embedded(self.inner, _P2SH)
 
     @override
@@ -2928,17 +2939,11 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     in `inner`, counted as `_assert_keys` counts it, is the one `parse`
     names.
 
-    Inside ``sh()``, the keys of a ``wsh()`` argument are refused
-    uncompressed too, because `parse` reads them in the ``wsh()``
-    context: an unpickled ``wsh()`` skips its own check of them.
-
     The key of a ``wpkh()`` argument is refused uncompressed in any
     context, because `parse` reads it compressed only: an unpickled
     ``wpkh()`` skips its own check of it.
     """
-    no_uncompressed = _no_uncompressed(context) or isinstance(
-        inner, (WshDescriptor, WpkhDescriptor)
-    )
+    no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
     def check(key: KeyExpression) -> None:
         _assert_outside_taproot(key)
