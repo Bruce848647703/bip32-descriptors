@@ -1812,7 +1812,8 @@ class ShDescriptor(Descriptor):
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
-    that check of its own.
+    that check of its own. A miniscript there is refused as
+    `WshDescriptor` refuses one, before its text is written.
     """
 
     inner: Descriptor
@@ -1825,10 +1826,8 @@ class ShDescriptor(Descriptor):
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
             assert_type(self.inner.inner, Descriptor, "inner descriptor")
+            _assert_wsh_argument(self.inner.inner)
         _assert_inner(self.inner, _P2SH)
-        if isinstance(self.inner, WshDescriptor):
-            _assert_inner(self.inner.inner, _P2WSH)
-            _assert_embedded(self.inner.inner, _P2WSH)
         _assert_embedded(self.inner, _P2SH)
 
     @override
@@ -1893,6 +1892,16 @@ class WshDescriptor(Descriptor):
     the size of its script or by the number of keys of a ``multi()`` is
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
+
+    A miniscript argument is refused before its text is written: for
+    its nodes as `MiniscriptDescriptor` refuses them, their type,
+    context, fragment and the type of their keys, then for its keys as
+    above, then for a node holding a number of keys its fragment does
+    not take, with `MiniscriptDescriptor`'s message, as `parse` reads the
+    keys of a node before it counts them. An unpickled one skips its own
+    check, and its text need not be written without raising. Its
+    sanity, and whether `parse` reads its text as a descriptor function,
+    are left to its own build.
     """
 
     inner: Descriptor
@@ -1901,8 +1910,7 @@ class WshDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
-        _assert_inner(self.inner, _P2WSH)
-        _assert_embedded(self.inner, _P2WSH)
+        _assert_wsh_argument(self.inner)
 
     @override
     def __str__(self) -> str:
@@ -1951,6 +1959,20 @@ class WshDescriptor(Descriptor):
             _inner_expansion(self.inner, index, prv_keys),
             witness_script=_embedded(self, index, prv_keys),
         )
+
+
+def _assert_wsh_argument(inner: Descriptor) -> None:
+    """Refuse an argument of ``wsh()`` as `WshDescriptor` says.
+
+    Nothing here writes the text of a miniscript argument.
+    """
+    _assert_inner(inner, _P2WSH)
+    if isinstance(inner, MiniscriptDescriptor):
+        assert_type(inner.node, Miniscript, "miniscript")
+        _assert_p2wsh(inner.node)
+    _assert_embedded(inner, _P2WSH)
+    if isinstance(inner, MiniscriptDescriptor):
+        _assert_key_numbers([inner.node], inner.node.key_expressions)
 
 
 def _assert_p2wsh(node: Miniscript) -> None:
