@@ -79,6 +79,10 @@ before it reads a key. Issue btclib-org/bip32-descriptors#249.
 fragment is no `str`, after its context and before its keys. Issue
 btclib-org/bip32-descriptors#250.
 
+`Miniscript`, `TrDescriptor` and `MiniscriptDescriptor` refuse a
+fragment that is a `str` subclass as they refuse one that is no `str`,
+whether it hashes or not. Issue btclib-org/bip32-descriptors#260.
+
 A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
 text `parse` refuses: its docstring says why. Issue
 btclib-org/bip32-descriptors#253.
@@ -331,6 +335,29 @@ def test_a_node_of_another_context_and_an_unknown_fragment_is_not_echoed() -> No
     assert_secret_free(e.value, [_RANDOM_HEX])
 
 
+class _Subclass(str):
+    """A `str` in all but its type."""
+
+    __slots__ = ()
+
+
+class _Unhashable(str):
+    """A `str` that no dict or set can look up."""
+
+    __slots__ = ()
+    __hash__ = None  # type: ignore[assignment]
+
+
+class _HashFails(str):
+    """A `str` whose type defines a hash that fails."""
+
+    __slots__ = ()
+
+    @override
+    def __hash__(self) -> int:
+        raise TypeError
+
+
 # a fragment of each type an unpickled node can hold, and the spelling of
 # it a refusal could print
 _FRAGMENTS_OF_ANOTHER_TYPE = [
@@ -338,6 +365,9 @@ _FRAGMENTS_OF_ANOTHER_TYPE = [
     ((_RANDOM_HEX,), _RANDOM_HEX),
     (770907403214864877517, "770907403214864877517"),
     (None, _RANDOM_HEX),
+    (_Subclass(_RANDOM_HEX), _RANDOM_HEX),
+    (_Unhashable(_RANDOM_HEX), _RANDOM_HEX),
+    (_HashFails(_RANDOM_HEX), _RANDOM_HEX),
 ]
 
 
@@ -345,7 +375,7 @@ _FRAGMENTS_OF_ANOTHER_TYPE = [
 @pytest.mark.parametrize(
     "fragment,spelling",
     _FRAGMENTS_OF_ANOTHER_TYPE,
-    ids=["list", "tuple", "int", "None"],
+    ids=["list", "tuple", "int", "None", "subclass", "unhashable", "hash fails"],
 )
 def test_a_node_whose_fragment_is_no_str_is_refused(
     fragment: object, spelling: str, fault: str
@@ -353,7 +383,8 @@ def test_a_node_whose_fragment_is_no_str_is_refused(
     """An unpickled node holds any fragment, so its type alone is named.
 
     In a ``tr()`` leaf and in a ``wsh()``, after the node's context and
-    before its keys. Issue btclib-org/bip32-descriptors#250.
+    before its keys. Issues btclib-org/bip32-descriptors#250 and
+    btclib-org/bip32-descriptors#260.
     """
     wraps: list[tuple[str, str, str, Callable[[miniscript.Miniscript], object]]] = [
         (miniscript.TAPSCRIPT, _X, miniscript.P2WSH, lambda n: TrDescriptor(_KEY, n)),
@@ -800,10 +831,27 @@ _PK_K = miniscript.Miniscript("pk_k", miniscript.TAPSCRIPT, keys=(_KEY,))
 _SHA256 = miniscript.Miniscript("sha256", miniscript.P2WSH, data=bytes(32))
 
 
-@pytest.mark.parametrize("fragment", [[], 5, None])
+@pytest.mark.parametrize("fragment", [[], 5, None, _Subclass("older")])
 def test_a_miniscript_fragment_of_another_type_is_refused(fragment: Any) -> None:
-    """The fragment is the name BIP379 gives it, never another type."""
+    """The fragment is the name BIP379 gives it, never another type.
+
+    A `str` subclass included. Issue btclib-org/bip32-descriptors#260.
+    """
     err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_OLDER, fragment=fragment)
+
+
+@pytest.mark.parametrize("cls", [_Unhashable, _HashFails])
+def test_a_miniscript_fragment_no_dict_can_look_up_is_refused(cls: type[str]) -> None:
+    """For its type, before anything hashes it.
+
+    Issue btclib-org/bip32-descriptors#260.
+    """
+    fragment = cls("older")
+    with pytest.raises(TypeError):
+        hash(fragment)
+    err_msg = f"^invalid fragment type: {cls.__name__}$"
     with pytest.raises(BTClibTypeError, match=err_msg):
         replace(_OLDER, fragment=fragment)
 

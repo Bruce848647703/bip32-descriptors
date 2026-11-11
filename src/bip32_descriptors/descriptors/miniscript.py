@@ -286,6 +286,18 @@ def _assert_valid_context(context: str) -> None:
         raise BTClibValueError(err_msg)
 
 
+def _assert_fragment_type(fragment: object) -> None:
+    """Refuse a fragment that is no `str`, a subclass of it included.
+
+    The fragment is looked up in dicts and sets, and a subclass can hash
+    as no `str` does, or not hash at all. `_named_fragment` makes the same
+    test. The refusal names the type alone, echoing no value.
+    """
+    if type(fragment) is not str:
+        err_msg = f"invalid fragment type: {type(fragment).__name__}"
+        raise BTClibTypeError(err_msg)
+
+
 def _multisig_context_fault(fragment: str) -> str:
     """Return the fault of a multisig outside its context."""
     if fragment == "multi":
@@ -1193,9 +1205,10 @@ class Miniscript:
         names only the library's own.
 
         The fragment, the keys, the digest and the number each have their
-        type asserted just before their value is checked, the keys as a
-        tuple and each key as a `KeyExpression`: a field of another type
-        leaves as a `BTClibTypeError` naming the field and the type alone.
+        type asserted just before their value is checked, the fragment as
+        `_assert_fragment_type` says, the keys as a tuple and each key as a
+        `KeyExpression`: a field of another type leaves as a
+        `BTClibTypeError` naming the field and the type alone.
         """
         assert_type(self.context, str, "context")
         if self.context not in (P2WSH, TAPSCRIPT):
@@ -1203,7 +1216,7 @@ class Miniscript:
             err_msg += f"; it must be one of {sorted((P2WSH, TAPSCRIPT))}"
             raise BTClibValueError(err_msg)
         fragment = self.fragment
-        assert_type(fragment, str, "fragment")
+        _assert_fragment_type(fragment)
         if fragment == "thresh":
             if not self.subs:
                 raise BTClibValueError("thresh() takes at least one subexpression")
