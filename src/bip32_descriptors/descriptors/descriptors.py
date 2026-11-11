@@ -2030,6 +2030,13 @@ class MultiDescriptor(Descriptor):
     OP_CHECKMULTISIG takes, and a k outside 1 to n are refused when built,
     in `parse`'s order and with its messages. A negative threshold, which
     no text holds, is refused as one over 2**32-1 is.
+
+    The bound of three keys on a bare ``multi()`` or ``sortedmulti()`` is
+    `parse`'s alone: the build cannot know whether the value will be bare,
+    and ``sh()`` and ``wsh()`` check their own bounds when they wrap it.
+    One of more than three keys builds, gives a bare multisig script, and
+    writes a text `parse` refuses. Bitcoin Core's `InferDescriptor` writes
+    such a ``multi()`` for that script too, as `infer_descriptor` says.
     """
 
     threshold: int

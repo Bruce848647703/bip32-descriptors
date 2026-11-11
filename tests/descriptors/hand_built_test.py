@@ -2,7 +2,7 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""What `parse` never builds is refused when a descriptor is built by hand.
+"""Which of `parse`'s refusals a descriptor built by hand meets too.
 
 A field of the wrong type, in every `Descriptor` fragment and in a
 `MultiA`, leaves as a `BTClibTypeError`, and so does a `Miniscript`
@@ -59,6 +59,10 @@ an uncompressed key and the node's text can be written, the node is left
 to the descriptor's text and sanity checks; where it passes them,
 ``tr()`` and ``wsh()`` refuse that key by its position, and a bare
 `MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
+
+A `MultiDescriptor` of more than three keys builds, and as a top-level
+descriptor writes a text `parse` refuses: its docstring says why. Issue
+btclib-org/bip32-descriptors#226.
 """
 
 from __future__ import annotations
@@ -77,7 +81,15 @@ from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32 import derive, rootxprv_from_seed, xpub_from_xprv
-from bip32_descriptors.descriptors import at_index, miniscript, normalized, parse
+from bip32_descriptors.descriptors import (
+    Provider,
+    add_checksum,
+    at_index,
+    infer_descriptor,
+    miniscript,
+    normalized,
+    parse,
+)
 from bip32_descriptors.descriptors import descriptors as descriptors_module
 from bip32_descriptors.descriptors.descriptors import (
     AddrDescriptor,
@@ -1884,6 +1896,30 @@ def test_a_negative_multi_threshold_is_refused_before_the_keys(sort: bool) -> No
     parsed = cast("MultiDescriptor", _PARSED[MultiDescriptor])
     with pytest.raises(BTClibValueError, match=err_msg):
         replace(parsed, threshold=-1, keys=_KEYS, sort=sort)
+
+
+@pytest.mark.parametrize("sort", [False, True])
+def test_a_bare_multi_of_four_keys_builds_and_writes_what_parse_refuses(
+    sort: bool,
+) -> None:
+    """The bound of three keys on a bare ``multi()`` is `parse`'s alone.
+
+    The same value is valid inside ``sh()`` and ``wsh()``, and
+    `infer_descriptor` answers the ``raw()`` of its bare script.
+    """
+    name = "sortedmulti" if sort else "multi"
+    multi = MultiDescriptor(1, _KEYS[:4], sort=sort)
+    script_pub_key = multi.script_pub_key()
+    assert script_pub_key.type == "p2ms"
+    text = str(multi)
+    err_msg = rf"^a bare {name}\(\) takes at most 3 keys, 4 given$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    for wrapper in (ShDescriptor, WshDescriptor):
+        wrapped = wrapper(multi)
+        assert parse(str(wrapped)).script_pub_key() == wrapped.script_pub_key()
+    raw = add_checksum(f"raw({script_pub_key.script.hex()})")
+    assert infer_descriptor(script_pub_key.script, Provider()) == raw
 
 
 @pytest.mark.parametrize(
