@@ -1817,7 +1817,8 @@ class ShDescriptor(Descriptor):
     `WshDescriptor` refuses one, before ``sh()`` writes its text.
 
     An unpickled ``multi()`` argument is refused for a field of the
-    wrong type and for its threshold as `WshDescriptor` says.
+    wrong type and for its threshold as `WshDescriptor` says, and a
+    ``raw()`` or ``rawpkh()`` one for its bytes.
     """
 
     inner: Descriptor
@@ -1913,7 +1914,9 @@ class WshDescriptor(Descriptor):
     An unpickled ``multi()`` argument skips its own check. A field of
     the wrong type is refused first, as `_assert_multi_types` says, and
     a threshold out of range whose text can be written in `parse`'s
-    order, as `_assert_embedded` says.
+    order, as `_assert_embedded` says. A ``raw()`` script or a
+    ``rawpkh()`` key hash that is no bytes is refused first too, as
+    `_assert_script_only_types` says.
     """
 
     inner: Descriptor
@@ -2384,7 +2387,7 @@ class RawDescriptor(Descriptor):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        assert_type(self.script, bytes, "script")
+        _assert_script_only_types(self)
 
     @override
     def __str__(self) -> str:
@@ -2460,7 +2463,7 @@ class RawPkhDescriptor(Descriptor):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        assert_type(self.key_hash, bytes, "key hash")
+        _assert_script_only_types(self)
         _assert_key_hash_size(self.key_hash)
 
     @override
@@ -2514,6 +2517,18 @@ class RawPkhDescriptor(Descriptor):
 # the fragments that are a script and nothing else: what ``sh()`` and
 # ``wsh()`` embed as it is, with no key origin of its own to write
 _SCRIPT_ONLY = (RawDescriptor, RawPkhDescriptor)
+
+
+def _assert_script_only_types(inner: RawDescriptor | RawPkhDescriptor) -> None:
+    """Refuse a ``raw()`` script or a ``rawpkh()`` key hash that is no bytes.
+
+    `_assert_inner` calls it too, for the reason `_assert_multi_types`
+    gives.
+    """
+    if isinstance(inner, RawDescriptor):
+        assert_type(inner.script, bytes, "script")
+    else:
+        assert_type(inner.key_hash, bytes, "key hash")
 
 
 def _embedded(
@@ -2986,11 +3001,14 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
 
-    A ``multi()`` holding a field of the wrong type is refused first, as
-    `_assert_multi_types` says.
+    A field of the wrong type that `_assert_multi_types` or
+    `_assert_script_only_types` checks is refused first, as those
+    functions say.
     """
     if isinstance(inner, MultiDescriptor):
         _assert_multi_types(inner)
+    elif isinstance(inner, _SCRIPT_ONLY):
+        _assert_script_only_types(inner)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
