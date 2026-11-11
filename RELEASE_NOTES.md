@@ -9,6 +9,67 @@ number says when a release was cut, and promises nothing about
 compatibility, so a breaking change is announced in this file — read it
 before upgrading, rather than a digit.
 
+## v2026.11.11
+
+This release needs btclib 2026.11.10 and ecc 2026.11.8 or later, and
+installs base58-bech32 2026.10.23 or later. The `secp256k1` extra
+installs `ecc[secp256k1]` 2026.11.8 or later. Beside btclib 2026.11.10,
+which has no `btclib.base58`, v2026.11.7's `bip32` and `descriptors`
+modules fail to import.
+
+This breaks the API. `crack_prv_key_var` is removed from
+`bip32_descriptors.bip32`, with no alias: call `crack_prv_key`, which
+takes the same arguments.
+
+`parse` and `miniscript.parse` declare `prv_keys` a `MutableMapping`,
+where v2026.11.7 declared a `dict`. They refuse a read-only mapping, such
+as a `MappingProxyType`, with `BTClibTypeError`. v2026.11.7 accepted one
+unless the text held an xprv, where it raised the built-in `TypeError`.
+They also take `preimages` and `wifs` mappings, which the new
+`private_string` writes back from, as it does from `prv_keys`.
+
+A descriptor, a key expression or a miniscript node built by hand, or
+through `dataclasses.replace`, refuses when built a field of a type
+`parse` never produces and a value `parse` refuses there, with a
+`BTClibTypeError` or a `BTClibValueError`. v2026.11.7 built it: a hash
+fragment's digest given as a `bytearray`, and a `wpkh()` given an
+uncompressed key by `replace`, whose `str()` `parse` refuses.
+`miniscript.from_script` refuses a script holding a key that is no curve
+point, with ecc's `EccValueError`, where v2026.11.7 read it.
+
+`at_index` refuses an index at which a miniscript names one key twice,
+with `BTClibValueError`: index 1 of `tr(K,and_v(v:pk(X/*),pk(X/1)))` or of
+its `wsh()` form, which v2026.11.7 answered. Index 0 is answered.
+`normalized` refuses a descriptor whose keys, once derived with
+`prv_keys`, repeat one: `wsh(and_v(v:pk(X/1h/0),pk(C/0)))`, with C the
+xpub at X/1h, or its `tr()` form, which v2026.11.7 normalized.
+
+`parse` answers other objects for some texts, and `str()` writes the same
+text. The `inner` of `wsh(c:pk_k(K))` and `wsh(c:pk_h(K))` is a
+`PkDescriptor` and a `PkhDescriptor`, where v2026.11.7 answered a
+`MiniscriptDescriptor`. The `tree` of `tr(K,c:pk_k(X))` is a
+`KeyExpression`, where v2026.11.7 answered a `Miniscript`.
+
+A key read from an odd-y WIF in `tr()`, `rawtr()` or a tapscript leaf has
+the 0x02 `pub_key` of its x, where v2026.11.7 kept the WIF's 0x03 key.
+`satisfy` finds no signature offered under that 0x03 key: offer it under
+the x-only key or the 0x02 key. A tapscript leaf naming two keys of one x
+is refused whatever their parity, where v2026.11.7 read
+`and_v(v:pk(02X),pk(03X))`.
+
+`multipath_descriptors` writes every path of a multipath key in the one
+hardening symbol it chooses for the key: `wpkh(<xprv>/<0h;1'>/*)` gives
+`wpkh(<xprv>/0'/*)` first, where v2026.11.7 gave `wpkh(<xprv>/0h/*)`.
+The string and its checksum change.
+
+Some refusals change their message, so code matching the old text has
+to change: `parse` names a refused key by its position, as in
+`key 0: uncompressed public keys are not allowed here`, and gives
+Bitcoin Core's message and order in more places.
+
+`parse` reads `unused(KEY)` at the top level, as an `UnusedDescriptor`,
+and a hash fragment's `preimage(HEX)`, which it files in `preimages`.
+
 ## v2026.11.7
 
 This release needs ecc 2026.11.6 or later. The `secp256k1` extra
