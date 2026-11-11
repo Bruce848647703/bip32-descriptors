@@ -74,9 +74,11 @@ the message `parse` gives inside ``sh()``: more than three keys, one of
 them uncompressed, whose redeem script is over the push limit of
 ``sh()``. Issue btclib-org/bip32-descriptors#251.
 
-`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor` and `ShDescriptor`
-refuse an unpickled node whose number of subexpressions its fragment does
-not take, before writing its text. Issue btclib-org/bip32-descriptors#275.
+`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor`, and
+`ShDescriptor` for a ``wsh()`` argument, refuse an unpickled node holding
+a number of subexpressions its fragment does not take, with the node's
+own message, before its text is written: after its context and its
+fragment's type, before its keys. Issue btclib-org/bip32-descriptors#275.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
@@ -3403,29 +3405,6 @@ def test_an_unpickled_unknown_fragment_is_left_to_its_key_count() -> None:
         WshDescriptor(MiniscriptDescriptor(root))
 
 
-def test_an_unpickled_thresh_without_subexpressions_is_refused() -> None:
-    """Refused by the arity rule before the walk reads its subexpressions."""
-    root = _unpickled(miniscript.parse(f"thresh(1,pk({_C}))", _P2WSH))
-    object.__setattr__(root, "subs", ())
-    with pytest.raises(
-        BTClibValueError, match="^thresh\\(\\) takes at least one subexpression$"
-    ):
-        WshDescriptor(MiniscriptDescriptor(root))
-
-
-@pytest.mark.parametrize("wrapped", _WRAPPED)
-def test_an_unpickled_node_of_the_wrong_arity_is_refused(wrapped: str) -> None:
-    """Refused before any text is written. Issue #275."""
-    context, wrap = _WRAPPED[wrapped]
-    key = _X if context == _TAPSCRIPT else _C
-    root = _unpickled(miniscript.parse(f"and_v(v:pk({key}),pk({key}))", context))
-    object.__setattr__(root, "subs", root.subs[:1])
-    with pytest.raises(
-        BTClibValueError, match="^and_v takes 2 subexpressions, 1 given$"
-    ):
-        wrap(root)
-
-
 # (fragment, context, the keys of its node, the refusal `parse` gives)
 _KEY_BEFORE_NUMBER = [
     ("multi", _P2WSH, (_X_KEYS[0], *_C_KEYS[1:21]), f"key 1: {_X_ONLY_HERE}"),
@@ -3933,3 +3912,164 @@ def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
         inner = _unpickled_wsh(inner)
     with pytest.raises(BTClibTypeError, match=err_msg):
         (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
+
+
+# a fragment of each number of subexpressions, in an expression with the
+# path to its node
+_SUB_NUMBERS: dict[str, tuple[str, tuple[int, ...]]] = {
+    "older": ("and_v(v:pk({}),older(1))", (1,)),
+    "v": ("and_v(v:pk({}),pk({}))", (0,)),
+    "and_v": ("and_v(v:pk({}),pk({}))", ()),
+    "andor": ("andor(pk({}),older(1),pk({}))", ()),
+    "thresh": ("thresh(1,pk({}),s:pk({}))", ()),
+}
+# each fragment and the subexpressions it is given that it does not take
+_SUB_NUMBER_FAULTS = [
+    ("older", "more"),
+    ("older", "no-node"),
+    ("v", "none"),
+    ("v", "more"),
+    ("and_v", "none"),
+    ("and_v", "fewer"),
+    ("and_v", "more"),
+    ("andor", "none"),
+    ("andor", "fewer"),
+    ("andor", "more"),
+    ("thresh", "none"),
+]
+
+
+def _faulty_subs(
+    subs: tuple[miniscript.Miniscript, ...], fault: str, context: str
+) -> tuple[object, ...]:
+    """Return `subs` with `fault`: none, one fewer, one more, or no node."""
+    if fault == "none":
+        return ()
+    if fault == "fewer":
+        return subs[:-1]
+    if fault == "more":
+        return (*subs, miniscript.parse("older(2)", context))
+    return (*subs, "not a node")
+
+
+def _wrapped_unpickled(wrapped: str, root: miniscript.Miniscript) -> Descriptor:
+    """Return `root` in ``tr()``, alone, or in an unpickled ``wsh()`` argument.
+
+    `MiniscriptDescriptor` and `WshDescriptor` refuse a node `Miniscript`
+    refuses when built, and unpickling skips that check, so the node is
+    given to an unpickled copy.
+    """
+    if wrapped == "tr":
+        return TrDescriptor(_KEY, root)
+    if wrapped == "bare":
+        return MiniscriptDescriptor(root)
+    parsed = cast("WshDescriptor", _MINISCRIPT).inner
+    inner: MiniscriptDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(inner, "node", root)
+    if wrapped == "wsh":
+        return WshDescriptor(inner)
+    return ShDescriptor(_unpickled_wsh(inner))
+
+
+@pytest.mark.parametrize("wrapped", ["tr", "bare", "wsh", "sh-wsh"])
+@pytest.mark.parametrize(
+    "fragment,fault",
+    _SUB_NUMBER_FAULTS,
+    ids=[f"{fragment}-{fault}" for fragment, fault in _SUB_NUMBER_FAULTS],
+)
+def test_a_node_holding_a_number_of_subexpressions_it_does_not_take_is_refused(
+    fragment: str, fault: str, wrapped: str
+) -> None:
+    """With the message the node's own build gives, before its text is written.
+
+    An unpickled node skips that check of its own. Issue
+    btclib-org/bip32-descriptors#275.
+    """
+    context = _TAPSCRIPT if wrapped == "tr" else _P2WSH
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    expression, path = _SUB_NUMBERS[fragment]
+    root = _unpickled(miniscript.parse(expression.format(*own[:2]), context))
+    node = _node_at(root, path)
+    subs = _faulty_subs(node.subs, fault, context)
+    with pytest.raises(BTClibValueError) as built:
+        replace(node, subs=cast("tuple[miniscript.Miniscript, ...]", subs))
+    object.__setattr__(node, "subs", subs)
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(str(built.value))}$"):
+        _wrapped_unpickled(wrapped, root)
+
+
+# a field given to a node beside a node holding too few subexpressions,
+# its value in each context, and its refusal
+_BESIDE_THE_SUB_NUMBER: dict[
+    str, tuple[str, Callable[[str], object], type[Exception], str]
+] = {
+    "context": (
+        "context",
+        lambda c: _P2WSH if c == _TAPSCRIPT else _TAPSCRIPT,
+        BTClibValueError,
+        "not a {kind} node: {fragment} in {value}",
+    ),
+    "fragment": (
+        "fragment",
+        lambda _: None,
+        BTClibTypeError,
+        "invalid fragment type: NoneType",
+    ),
+    "key-type": (
+        "keys",
+        lambda _: ("not a key",),
+        BTClibTypeError,
+        "invalid key type: str",
+    ),
+    "key-number": (
+        "keys",
+        lambda c: (_X_KEYS if c == _TAPSCRIPT else _C_KEYS)[2:3],
+        BTClibValueError,
+        "invalid number of keys in {fragment}: 1",
+    ),
+}
+# where each of them is named before the number of subexpressions
+_NAMED_BEFORE_THE_SUB_NUMBER = {
+    ("same", "context"),
+    ("same", "fragment"),
+    ("walked-first", "context"),
+    ("walked-first", "fragment"),
+    ("walked-first", "key-type"),
+}
+
+
+@pytest.mark.parametrize("wrapped", ["tr", "bare", "wsh", "sh-wsh"])
+@pytest.mark.parametrize("where", ["same", "walked-first", "walked-later"])
+@pytest.mark.parametrize("fault", _BESIDE_THE_SUB_NUMBER)
+def test_a_node_s_number_of_subexpressions_is_refused_in_the_walk_s_order(
+    fault: str, where: str, wrapped: str
+) -> None:
+    """After its context and its fragment's type, before its keys.
+
+    A fault the walk checks on another node it reaches first is named
+    first: its context, its fragment's type and its keys' type. A number
+    of keys, and a key refused for its position, are read once the walk
+    is done. Issue btclib-org/bip32-descriptors#275.
+    """
+    context = _TAPSCRIPT if wrapped == "tr" else _P2WSH
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    # the walk reaches the last subexpression of a node first
+    if where == "walked-later":
+        expression, path, other = "or_i(pk({}),and_v(v:pk({}),pk({})))", (1,), (0, 0)
+    else:
+        expression, path, other = "or_i(and_v(v:pk({}),pk({})),pk({}))", (0,), (1, 0)
+    root = _unpickled(miniscript.parse(expression.format(*own[:3]), context))
+    node = _node_at(root, path)
+    object.__setattr__(node, "subs", node.subs[:1])
+    field, value, error, refusal = _BESIDE_THE_SUB_NUMBER[fault]
+    faulty = node if where == "same" else _node_at(root, other)
+    refusal = refusal.format(
+        kind="tapscript" if context == _TAPSCRIPT else "P2WSH",
+        fragment=faulty.fragment,
+        value=value(context),
+    )
+    object.__setattr__(faulty, field, value(context))
+    if (where, fault) not in _NAMED_BEFORE_THE_SUB_NUMBER:
+        error, refusal = BTClibValueError, "and_v takes 2 subexpressions, 1 given"
+    with pytest.raises(error, match=f"^{re.escape(refusal)}$"):
+        _wrapped_unpickled(wrapped, root)

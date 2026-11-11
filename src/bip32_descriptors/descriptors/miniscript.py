@@ -306,7 +306,10 @@ def _multisig_context_fault(fragment: str) -> str:
 
 
 def _assert_arity(fragment: str, count: int) -> None:
-    """Refuse a number of subexpressions the fragment does not take."""
+    """Refuse a number of subexpressions the fragment does not take.
+
+    A fragment the library does not define is refused as unknown.
+    """
     if fragment == "thresh":
         if count == 0:
             raise BTClibValueError("thresh() takes at least one subexpression")

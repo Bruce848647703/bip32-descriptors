@@ -831,8 +831,8 @@ def _tapscript_node(node: object) -> Miniscript:
     does, holds any value as a subexpression, a context or a fragment, so
     only the library's own context is named, a refusal echoing no value
     it holds. Once its context passes, its fragment is refused as
-    `_assert_fragment_type` says, and its number of subexpressions as
-    `_assert_arity` says.
+    `_assert_fragment_type` says, and, where the library defines that
+    fragment, its number of subexpressions as `_assert_arity` says.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -883,8 +883,9 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript node of that context is then refused for its fragment,
-    before its keys are read, as `_tapscript_node` says.
+    A miniscript node of that context is then refused for its fragment
+    and its number of subexpressions, before its keys are read, as
+    `_tapscript_node` says.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says.
@@ -1932,13 +1933,14 @@ class WshDescriptor(Descriptor):
     skips its own check, and what it holds need not be written without
     raising.
 
-    A miniscript argument is refused before its text is written: for
-    its nodes as `MiniscriptDescriptor` refuses them, their type,
-    context, fragment and the type of their keys, then for its keys as
-    above, then for a node holding a number of keys its fragment does
-    not take, with `MiniscriptDescriptor`'s message, as `parse` reads the
-    keys of a node before it counts them. An unpickled one skips its own
-    check, and its text need not be written without raising.
+    A miniscript argument is refused before its text is written: for its
+    nodes as `MiniscriptDescriptor` refuses them, their type, context,
+    fragment, number of subexpressions and the type of their keys, then
+    for its keys as above, then for a node holding a number of keys its
+    fragment does not take, with `MiniscriptDescriptor`'s message, as
+    `parse` reads the keys of a node before it counts them. An unpickled
+    one skips its own check, and its text need not be written without
+    raising.
 
     Once those pass, a miniscript argument whose text `parse` reads as a
     descriptor function, such as ``pk()``, and then one that is not sane,
@@ -2037,10 +2039,10 @@ def _assert_p2wsh(node: Miniscript) -> None:
     so every node is walked, and only the library's own context and
     fragments are named.
 
-    A node is refused first where it is no `Miniscript`, and, once its
-    context passes, where `_assert_fragment_type` refuses its fragment
-    and `_assert_arity` its number of subexpressions, before its keys are
-    read.
+    A node is refused first where it is no `Miniscript`. Once its context
+    passes, its fragment is refused as `_assert_fragment_type` says, and,
+    where the library defines that fragment, its number of subexpressions
+    as `_assert_arity` says, before its keys are read.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.
