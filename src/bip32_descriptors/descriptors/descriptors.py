@@ -1717,10 +1717,11 @@ class WpkhDescriptor(Descriptor):
 class ShDescriptor(Descriptor):
     """``sh(SCRIPT)``: the argument, p2sh-embedded, BIP381.
 
-    An argument `parse` refuses inside ``sh()`` by its function, by the
-    size of its script or by the number of keys of a ``multi()`` is
-    refused when built, with `parse`'s message, unless the argument is
-    invalid by itself, as `Descriptor` says.
+    An argument `parse` refuses inside ``sh()`` by its function, by a
+    key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key of a
+    ``wsh()`` argument, by the size of its script or by the number of
+    keys of a ``multi()`` is refused when built, with `parse`'s message,
+    unless the argument is invalid by itself, as `Descriptor` says.
     """
 
     inner: Descriptor
@@ -1789,10 +1790,11 @@ class ShDescriptor(Descriptor):
 class WshDescriptor(Descriptor):
     """``wsh(SCRIPT)``: the argument, P2WSH-embedded, BIP382.
 
-    An argument `parse` refuses inside ``wsh()`` by its function, by an
-    uncompressed key, by the size of its script or by the number of keys
-    of a ``multi()`` is refused when built, with `parse`'s message, unless
-    the argument is invalid by itself, as `Descriptor` says.
+    An argument `parse` refuses inside ``wsh()`` by its function, by a
+    key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key, by
+    the size of its script or by the number of keys of a ``multi()`` is
+    refused when built, with `parse`'s message, unless the argument is
+    invalid by itself, as `Descriptor` says.
     """
 
     inner: Descriptor
@@ -2810,14 +2812,26 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    An uncompressed key, the number of keys of a ``multi()``, and the
-    size of its script, in `parse`'s order and with its messages.
-    ``sh()`` and ``wsh()`` hold no key of their own, so a key's
-    position in `inner`, counted as `_assert_keys` counts it, is the one
-    `parse` names.
+    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, the
+    number of keys of a ``multi()``, and the size of its script, in
+    `parse`'s order and with its messages: key by key, each refused for
+    its taproot spelling before its compression. An unpickled argument
+    skips its own check of the keys. ``sh()`` and ``wsh()`` hold no key
+    of their own, so a key's position in `inner`, counted as
+    `_assert_keys` counts it, is the one `parse` names.
+
+    Inside ``sh()``, the keys of a ``wsh()`` argument are refused
+    uncompressed too, because `parse` reads them in the ``wsh()``
+    context: an unpickled ``wsh()`` skips its own check of them.
     """
-    if _no_uncompressed(context):
-        _assert_keys(inner.key_expressions, _assert_compressed)
+    no_uncompressed = _no_uncompressed(context) or isinstance(inner, WshDescriptor)
+
+    def check(key: KeyExpression) -> None:
+        _assert_outside_taproot(key)
+        if no_uncompressed:
+            _assert_compressed(key)
+
+    _assert_keys(inner.key_expressions, check)
     if isinstance(inner, MultiDescriptor):
         name = str(inner).partition("(")[0]
         _assert_multi_count(name, inner.keys)
