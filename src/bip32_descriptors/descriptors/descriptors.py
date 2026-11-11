@@ -883,9 +883,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript node of that context is then refused for its fragment
-    and its number of subexpressions, before its keys are read, as
-    `_tapscript_node` says.
+    A miniscript node of that context is then refused as
+    `_tapscript_node` says, before its keys are read.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says.
@@ -1934,13 +1933,11 @@ class WshDescriptor(Descriptor):
     raising.
 
     A miniscript argument is refused before its text is written: for its
-    nodes as `MiniscriptDescriptor` refuses them, their type, context,
-    fragment, number of subexpressions and the type of their keys, then
-    for its keys as above, then for a node holding a number of keys its
-    fragment does not take, with `MiniscriptDescriptor`'s message, as
-    `parse` reads the keys of a node before it counts them. An unpickled
-    one skips its own check, and its text need not be written without
-    raising.
+    nodes as `_assert_p2wsh` says, then for its keys as above, then for a
+    node holding a number of keys its fragment does not take, with
+    `MiniscriptDescriptor`'s message, as `parse` reads the keys of a node
+    before it counts them. An unpickled one skips its own check, and its
+    text need not be written without raising.
 
     Once those pass, a miniscript argument whose text `parse` reads as a
     descriptor function, such as ``pk()``, and then one that is not sane,

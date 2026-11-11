@@ -75,10 +75,11 @@ them uncompressed, whose redeem script is over the push limit of
 ``sh()``. Issue btclib-org/bip32-descriptors#251.
 
 `TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor`, and
-`ShDescriptor` for a ``wsh()`` argument, refuse an unpickled node holding
-a number of subexpressions its fragment does not take, with the node's
-own message, before its text is written: after its context and its
-fragment's type, before its keys. Issue btclib-org/bip32-descriptors#275.
+`ShDescriptor` for a ``wsh()`` argument, refuse an unpickled node of a
+fragment the library defines holding a number of subexpressions that
+fragment does not take, with the node's own message, before its text is
+written: after its context and its fragment's type, before its keys.
+Issue btclib-org/bip32-descriptors#275.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
