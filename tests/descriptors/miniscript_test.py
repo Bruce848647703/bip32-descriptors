@@ -56,6 +56,7 @@ from btclib.tx.tx import Tx
 from btclib.tx.tx_in import TxIn
 from btclib.tx.tx_out import TxOut
 from ecc import dsa, ssa
+from ecc.exceptions import EccValueError
 
 from bip32_descriptors.bip32.bip32 import (
     derive,
@@ -1423,6 +1424,79 @@ def test_a_tapscript_multi_a_is_satisfied_with_one_element_per_key() -> None:
     assert len(stack) == len(node.keys)
     with pytest.raises(BTClibValueError, match="no satisfaction"):
         node.satisfy({})
+
+
+# 0x02, then an x of no point: x**3 + 7 is no square modulo p for x = 5
+NO_POINT = "02" + "00" * 31 + "05"
+
+
+@pytest.mark.parametrize(
+    "script, context, held",
+    [
+        pytest.param(f"21{NO_POINT}ac", P2WSH, {}, id="pk"),
+        pytest.param(f"20{NO_POINT[2:]}ac", TAPSCRIPT, {}, id="tapscript pk"),
+        pytest.param(
+            f"76a914{hash160(bytes.fromhex(NO_POINT)).hex()}88ac",
+            P2WSH,
+            {hash160(bytes.fromhex(NO_POINT)): NO_POINT},
+            id="pkh",
+        ),
+        pytest.param(f"5121{KEY}21{NO_POINT}52ae", P2WSH, {}, id="multi"),
+        pytest.param(
+            serialize(
+                [
+                    XONLY,
+                    "OP_CHECKSIG",
+                    NO_POINT[2:],
+                    "OP_CHECKSIGADD",
+                    "OP_1",
+                    "OP_NUMEQUAL",
+                ]
+            ).hex(),
+            TAPSCRIPT,
+            {},
+            id="multi_a",
+        ),
+    ],
+)
+def test_a_key_that_is_no_point_is_read_from_a_script(
+    script: str, context: str, held: dict[Octets, Octets]
+) -> None:
+    """Read the key as Core's signer does, by its size and, in P2WSH, prefix.
+
+    Its text is one `parse` refuses, as Core's parser does, and the same
+    key built by hand is still refused.
+    """
+    node = from_script(script, context, held)
+    assert node.script().hex() == script
+    assert reads_back(script, context, held)
+    with pytest.raises(EccValueError, match="not a public key"):
+        parse(str(node), context)
+    with pytest.raises(EccValueError, match="^not a public key$"):
+        KeyExpression(pub_key=bytes.fromhex(NO_POINT))
+
+
+def test_a_key_that_is_no_point_is_dissatisfied_beside_one_that_signs() -> None:
+    """Satisfy ``or_b(pk(A),s:pk(X))`` with A's signature and an empty one.
+
+    Which is the witness Core's `WshSatisfier` makes, X being no point;
+    the script engine verifies the spend.
+    """
+    script = bytes.fromhex(f"21{KEYS[0]}ac7c21{NO_POINT}ac9b")
+    node = from_script(script)
+    prevout = TxOut(50_000, ScriptPubKey.p2wsh(script))
+    tx = Tx(
+        version=2,
+        lock_time=0,
+        vin=[TxIn(OutPoint(b"\x02" * 32, 0))],
+        vout=[TxOut(49_000, ScriptPubKey.p2wpkh(PubKeyData(KEYS[0])))],
+    )
+    msg_hash = sig_hash.segwit_v0(script, tx, 0, 1, prevout.value)
+    signature = dsa.sign_(msg_hash, SIGNING_KEYS[KEYS[0]]).serialize() + b"\x01"
+    stack = node.satisfy({KEYS[0]: signature})
+    assert stack == [b"", signature]
+    tx.vin[0].script_witness = Witness([*stack, script])
+    verify_transaction([prevout], tx)
 
 
 # a tr() whose script tree holds a miniscript leaf beside a key one: the
