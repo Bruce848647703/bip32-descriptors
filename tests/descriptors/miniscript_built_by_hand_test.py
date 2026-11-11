@@ -9,6 +9,9 @@ a subexpression whose context is not the node's. The first two are any
 value a caller passes, so the refusal names none of it. Issues
 btclib-org/bip32-descriptors#120, btclib-org/bip32-descriptors#130 and
 btclib-org/bip32-descriptors#133.
+
+Subexpressions given as no tuple, naming the type alone. Issue
+btclib-org/bip32-descriptors#287.
 """
 
 from __future__ import annotations
@@ -87,6 +90,25 @@ def test_a_context_of_another_type_is_refused(
     with pytest.raises(BTClibTypeError, match=err_msg) as e:
         replace(node, context=context)
     assert_secret_free(e.value, [spelling])
+
+
+@pytest.mark.parametrize(
+    "fragment,subs",
+    [
+        ("and_v", 5),
+        ("and_v", None),
+        ("v:", [parse_miniscript("older(1)")]),
+    ],
+    ids=["int", "None", "list"],
+)
+def test_subexpressions_of_another_type_are_refused(fragment: str, subs: Any) -> None:
+    """They are a tuple, and the refusal names the type alone.
+
+    Issue btclib-org/bip32-descriptors#287.
+    """
+    err_msg = f"^invalid subs type: {type(subs).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        Miniscript(fragment, P2WSH, subs)
 
 
 def test_a_p2wsh_node_of_a_tapscript_subexpression_is_refused() -> None:

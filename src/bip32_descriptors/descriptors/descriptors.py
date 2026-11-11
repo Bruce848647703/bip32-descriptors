@@ -881,7 +881,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     before its keys are read, as `_tapscript_node` says.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
-    not a tuple of KEY expressions, as `_assert_key_types` says.
+    not a tuple of KEY expressions, as `_assert_key_types` says, and a
+    miniscript node then where its subexpressions are not a tuple.
 
     Once the walk is done, so that a node of the wrong type or context is
     named first, a miniscript leaf is refused where any of its nodes holds
@@ -901,6 +902,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
         if in_leaf or isinstance(node, Miniscript):
             node = _tapscript_node(node)
             _assert_key_types(node)
+            assert_type(node.subs, tuple, "subs")
             if not in_leaf:
                 leaves.append(node)
             stack += [(sub, depth, True) for sub in node.subs]
@@ -2019,7 +2021,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
     before its keys are read.
 
     A node is also refused where its keys are not a tuple of KEY
-    expressions, as `_assert_key_types` says.
+    expressions, as `_assert_key_types` says, and then where its
+    subexpressions are not a tuple.
     """
     stack = [node]
     while stack:
@@ -2033,6 +2036,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             raise BTClibValueError(err_msg)
         _assert_fragment_type(sub.fragment)
         _assert_key_types(sub)
+        assert_type(sub.subs, tuple, "subs")
         stack += sub.subs
 
 

@@ -123,6 +123,10 @@ btclib-org/bip32-descriptors#269.
 a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
 ``rawpkh()`` whose key hash, is no bytes first, as its own build refuses
 it. Issue btclib-org/bip32-descriptors#271.
+
+`TrDescriptor` and `WshDescriptor` refuse an unpickled node whose
+subexpressions are no tuple, naming the type alone. Issue
+btclib-org/bip32-descriptors#287.
 """
 
 from __future__ import annotations
@@ -500,6 +504,31 @@ def test_an_unpickled_node_holding_a_key_of_another_type_is_refused(
     object.__setattr__(node.subs[0], "keys", (key,))
     with pytest.raises(BTClibTypeError, match=err_msg):
         WshDescriptor(MiniscriptDescriptor(node))
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["root", "nested"])
+@pytest.mark.parametrize("kind", ["int", "NoneType", "list"])
+def test_an_unpickled_node_whose_subexpressions_are_no_tuple_is_refused(
+    kind: str, nested: bool
+) -> None:
+    """In a ``tr()`` leaf and in a ``wsh()``, naming the type alone.
+
+    An unpickled node skips `Miniscript`'s own check of its
+    subexpressions, and a list holds what the tuple did. Issue
+    btclib-org/bip32-descriptors#287.
+    """
+    err_msg = f"^invalid subs type: {kind}$"
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    ms = _unpickled_miniscript(f"pk({_C})")
+    for node, wrap in (
+        (leaf, lambda: TrDescriptor(_KEY, leaf)),
+        (ms.node, lambda: WshDescriptor(ms)),
+    ):
+        target = node.subs[0] if nested else node
+        subs = {"int": 5, "NoneType": None, "list": list(target.subs)}[kind]
+        object.__setattr__(target, "subs", subs)
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            wrap()
 
 
 @pytest.mark.parametrize(
