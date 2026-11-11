@@ -152,6 +152,12 @@ A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
 point, which `miniscript.from_script` reads, with `parse`'s message, the
 last two lacking the key's position. Issue
 btclib-org/bip32-descriptors#292.
+
+`TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node whose
+fragment is a `str` the library does not define, as `Miniscript` refuses
+it, before its keys, echoing no value it holds. So do `WshDescriptor`,
+and `ShDescriptor` for a ``wsh()`` argument, where the node is in an
+unpickled `MiniscriptDescriptor`. Issue btclib-org/bip32-descriptors#285.
 """
 
 from __future__ import annotations
@@ -3671,20 +3677,84 @@ def test_a_node_s_type_or_context_is_refused_before_another_node_s_keys(
 
 
 def test_a_node_of_a_fragment_holding_no_key_is_refused_holding_one() -> None:
-    """Named "a node" where the library does not define its fragment.
+    """For its fragment first, where the library does not define it.
 
-    Issue btclib-org/bip32-descriptors#235.
+    Issues btclib-org/bip32-descriptors#235 and
+    btclib-org/bip32-descriptors#285.
     """
     root = _unpickled(miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT))
     object.__setattr__(root.subs[1], "keys", (_KEY2,))
     with pytest.raises(BTClibValueError, match="^invalid number of keys in older: 1$"):
         TrDescriptor(_KEY, root)
     object.__setattr__(root.subs[1], "fragment", _RANDOM_HEX)
-    with pytest.raises(
-        BTClibValueError, match="^invalid number of keys in a node: 1$"
-    ) as e:
+    with pytest.raises(BTClibValueError, match="^unknown miniscript fragment$") as e:
         TrDescriptor(_KEY, root)
     assert_secret_free(e.value, [_RANDOM_HEX])
+
+
+# the keys of a node whose fragment the library does not define: none, as
+# the node of issue btclib-org/bip32-descriptors#285 holds, and one that is
+# no `KeyExpression`, refused after the fragment
+_UNKNOWN_FRAGMENT_KEYS: dict[str, tuple[object, ...]] = {
+    "no-key": (),
+    "str-key": ("not a key",),
+}
+
+
+@pytest.mark.parametrize("keys", _UNKNOWN_FRAGMENT_KEYS)
+@pytest.mark.parametrize("fragment", ["zzz", _RANDOM_HEX])
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_of_an_unknown_fragment_is_refused_before_its_keys(
+    wrapped: str, fragment: str, keys: str
+) -> None:
+    """As `Miniscript` refuses it, echoing no value it holds.
+
+    An unpickled node skips that check, and its text is one `parse`
+    refuses. Issue btclib-org/bip32-descriptors#285.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    key = _X if context == _TAPSCRIPT else _C
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({key}),older(1))", context))
+    values: dict[str, Any] = {
+        "fragment": fragment,
+        "keys": _UNKNOWN_FRAGMENT_KEYS[keys],
+    }
+    with pytest.raises(BTClibValueError, match="^unknown miniscript fragment$"):
+        replace(root.subs[1], **values)
+    for name, value in values.items():
+        object.__setattr__(root.subs[1], name, value)
+    with pytest.raises(BTClibValueError, match="^unknown miniscript fragment$") as e:
+        wrap(root)
+    assert_secret_free(e.value, [fragment])
+
+
+@pytest.mark.parametrize("keys", _UNKNOWN_FRAGMENT_KEYS)
+@pytest.mark.parametrize("fragment", ["zzz", _RANDOM_HEX])
+def test_an_unpickled_miniscript_of_an_unknown_fragment_is_refused_inside_wsh(
+    fragment: str, keys: str
+) -> None:
+    """In ``wsh()`` and ``sh(wsh())``, directly or by `replace`.
+
+    The `MiniscriptDescriptor` is unpickled too, so it skips the check
+    the test above reaches. Issue btclib-org/bip32-descriptors#285.
+    """
+    inner = _unpickled_miniscript(f"and_v(v:pk({_C}),older(1))")
+    object.__setattr__(inner.node.subs[1], "fragment", fragment)
+    object.__setattr__(inner.node.subs[1], "keys", _UNKNOWN_FRAGMENT_KEYS[keys])
+    wsh = cast("WshDescriptor", _PARSED[WshDescriptor])
+    sh = cast("ShDescriptor", _PARSED[ShDescriptor])
+    builds: list[Callable[[], object]] = [
+        lambda: WshDescriptor(inner),
+        lambda: replace(wsh, inner=inner),
+        lambda: ShDescriptor(_unpickled_wsh(inner)),
+        lambda: replace(sh, inner=_unpickled_wsh(inner)),
+    ]
+    for build in builds:
+        with pytest.raises(
+            BTClibValueError, match="^unknown miniscript fragment$"
+        ) as e:
+            build()
+        assert_secret_free(e.value, [fragment])
 
 
 @pytest.mark.parametrize("wrapped", _WRAPPED)

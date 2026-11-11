@@ -19,6 +19,74 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.12
+
+### from_script reads a key that is no point, as Core's signer does
+
+A script holding such a key is read, and a descriptor built from it
+still refuses the key (closes #292).
+
+### from_script refuses a multi() key count outside 1 to 20 first
+
+The count is refused before a key is read (closes #215).
+
+### A hand-built taproot value refuses an uncompressed key
+
+`tr()`, `rawtr()`, `multi_a()` and a tapscript node refuse it when
+built (closes #221).
+
+### A hand-built multi() refuses keys no position takes
+
+More than three keys, at least one of them uncompressed, over the
+520-byte push limit, are refused when built (closes #251).
+
+### sh() and wsh() refuse an unpickled argument's keys and fields
+
+Each is checked as `parse` checks it (closes #233) (closes #238)
+(closes #239) (closes #248) (closes #257) (closes #264) (closes #271)
+(closes #272) (closes #276) (closes #281).
+
+### sh() and wsh() refuse an unpickled argument parse does not read
+
+The argument of a `wsh()` argument and a miniscript are checked too
+(closes #242) (closes #259) (closes #261) (closes #267) (closes #269).
+
+### tr() and wsh() refuse a miniscript node parse would not build
+
+Its fragment, keys and number of keys are checked, unpickled too
+(closes #235) (closes #246) (closes #249) (closes #250) (closes #260).
+
+### A bare multi() and a top-level miniscript say they do not parse back
+
+Their docstrings and tests pin that the refusal is `parse`'s alone
+(closes #226) (closes #253).
+
+### Core's vectors
+
+Core's `tr(musig(...)/<0;1>/*,sortedmulti_a(...))` scripts are recorded
+and tested (closes #198).
+
+### Tests
+
+`assert_secret_free` finds a secret that `repr` escapes
+(issue btclib-org/.github#1803) (issue btclib-org/.github#1950).
+
+### The bestpractices.dev answers
+
+The tree holds them, and they are corrected
+(issue btclib-org/.github#2153) (issue btclib-org/.github#2159).
+
+### RELEASING.md and CONTRIBUTING.md take the shared text again
+
+(issue btclib-org/.github#2097) (issue btclib-org/.github#2098)
+(issue btclib-org/.github#2107) (issue btclib-org/.github#2108)
+(issue btclib-org/.github#2109) (issue btclib-org/.github#2145).
+
+### The lock
+
+The pre-commit hook revisions move (#202), and so do bitcoin-core-rpc
+and uv-build (#210).
+
 ## v2026.11.11
 
 ### ecc 2026.11.8, btclib 2026.11.10 and base58-bech32
