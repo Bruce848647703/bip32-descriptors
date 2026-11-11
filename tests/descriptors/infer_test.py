@@ -512,6 +512,17 @@ def test_a_miniscript_core_refuses_is_no_miniscript() -> None:
         assert inferred == _addr(script)
 
 
+def test_a_multi_of_a_negative_number_of_keys_is_an_address() -> None:
+    """OP_1 <-127> OP_CHECKMULTISIG, a ``wsh()`` script no descriptor is.
+
+    Core's `DecodeScript` refuses its key count before it reads a key.
+    """
+    inner = bytes.fromhex("5101ffae")
+    script = ScriptPubKey.p2wsh(inner).script
+    inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
+    assert inferred == _addr(script)
+
+
 def _tr(tree: list) -> tuple[bytes, Provider]:  # type: ignore[type-arg]
     """Return a p2tr script of `K1` and a tree, and its provider."""
     sec = bytes.fromhex(K1)

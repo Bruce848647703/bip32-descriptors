@@ -913,6 +913,10 @@ REFUSED_SCRIPTS = [
     ("6b519a", "its first op code is missing"),
     ("ae", "closes no fragment"),
     ("5151ae", "no number of keys"),
+    # Core refuses a key count outside 1 to 20 before it reads a key
+    ("5101ffae", "invalid number of keys in multi: -127"),
+    ("5100ae", "invalid number of keys in multi: 0"),
+    ("51" + f"20{XONLY}" * 21 + "0115ae", "invalid number of keys in multi: 21"),
     (f"21{KEY}21{KEY}51ae", "no threshold"),
     (f"5120{XONLY}51ae", "not a multi.. key"),
 ]
@@ -982,6 +986,8 @@ def test_a_script_says_whether_it_is_the_expression_it_reads_as() -> None:
     assert reads_back(parse(f"and_v(v:pk({KEY}),older(36))").script())
     assert not reads_back(serialize(["OP_DROP", "OP_1"]))
     assert not reads_back("21" + KEY[:-2])
+    # OP_1 <-127> OP_CHECKMULTISIG, a key count Core refuses
+    assert not reads_back("5101ffae")
 
 
 def test_a_script_too_large_for_its_context_is_refused() -> None:
