@@ -78,6 +78,11 @@ before it reads a key. Issue btclib-org/bip32-descriptors#249.
 A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
 text `parse` refuses: its docstring says why. Issue
 btclib-org/bip32-descriptors#253.
+
+`ShDescriptor` and `WshDescriptor` refuse an unpickled argument holding
+a key that is no `KeyExpression`, after its function and before its
+other keys, their number and its script size. Issue
+btclib-org/bip32-descriptors#257.
 """
 
 from __future__ import annotations
@@ -1616,6 +1621,94 @@ def test_a_key_or_size_parse_takes_inside_sh_or_wsh_is_built(
 ) -> None:
     """The control: what `parse` reads there is built, and parses back."""
     assert parse(str(wrapper(inner))) == wrapper(inner)
+
+
+# (wrapper, its argument holding a key) for each argument an unpickled
+# copy of hands a key unchecked
+_HOLDING_KEY: list[
+    tuple[type[ShDescriptor | WshDescriptor], Callable[[Any], Descriptor]]
+] = [
+    (WshDescriptor, lambda key: _unpickled_and_v_pk(key, _C_KEY)),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_and_v_pk(key, _C_KEY))),
+    (ShDescriptor, _unpickled_wpkh),
+    (WshDescriptor, lambda key: _unpickled_multi((key,))),
+    (ShDescriptor, lambda key: _unpickled_multi((key,))),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_multi((key,)))),
+    (WshDescriptor, _unpickled_pk),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_sortedmulti((key,)))),
+    # beside a fault `parse` names, which the key's type comes before
+    (WshDescriptor, lambda key: _unpickled_multi((_U_KEY, key))),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_and_v_pk(_MUSIG, key))),
+    (ShDescriptor, lambda key: _unpickled_multi((_KEY, key))),
+    (WshDescriptor, lambda key: _unpickled_multi((*_KEYS[:20], key))),
+    (ShDescriptor, lambda key: _unpickled_multi((*_KEYS[:15], key))),
+]
+_HOLDING_KEY_IDS = [
+    "wsh-miniscript",
+    "sh-wsh-miniscript",
+    "sh-wpkh",
+    "wsh-multi",
+    "sh-multi",
+    "sh-wsh-multi",
+    "wsh-pk",
+    "sh-wsh-sortedmulti",
+    "wsh-uncompressed-then-key",
+    "sh-wsh-miniscript-musig-then-key",
+    "sh-x-only-then-key",
+    "wsh-21-keys",
+    "sh-547-bytes",
+]
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "none"])
+@pytest.mark.parametrize("wrapper,holding", _HOLDING_KEY, ids=_HOLDING_KEY_IDS)
+def test_a_key_of_another_type_inside_sh_or_wsh_is_refused_when_built(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Any], Descriptor],
+    key: Any,
+) -> None:
+    """An unpickled argument skips its own check of the keys' type.
+
+    Issue btclib-org/bip32-descriptors#257.
+    """
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrapper(holding(key))
+
+
+_WPKH_INSIDE_WSH = r"^wpkh\(\) is not allowed inside wsh\(\)$"
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "none"])
+@pytest.mark.parametrize(
+    "wrapper,holding,refusal",
+    [
+        (WshDescriptor, _unpickled_wpkh, _WPKH_INSIDE_WSH),
+        (
+            ShDescriptor,
+            lambda key: _unpickled_and_v_pk(key, _C_KEY),
+            MINISCRIPT_OUTSIDE,
+        ),
+        (
+            ShDescriptor,
+            lambda key: _unpickled_wsh(_unpickled_wpkh(key)),
+            _WPKH_INSIDE_WSH,
+        ),
+    ],
+    ids=["wsh-wpkh", "sh-miniscript", "sh-wsh-wpkh"],
+)
+def test_an_argument_parse_refuses_by_function_is_refused_before_its_key_type(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Any], Descriptor],
+    refusal: str,
+    key: Any,
+) -> None:
+    """The function is named before the key's type.
+
+    Issue btclib-org/bip32-descriptors#257.
+    """
+    with pytest.raises(BTClibValueError, match=refusal):
+        wrapper(holding(key))
 
 
 @pytest.mark.parametrize(
