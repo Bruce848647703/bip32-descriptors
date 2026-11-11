@@ -1816,8 +1816,8 @@ class ShDescriptor(Descriptor):
     that check of its own. A miniscript there is refused as
     `WshDescriptor` refuses one, before ``sh()`` writes its text.
 
-    A ``multi()`` argument whose keys are no tuple is refused as
-    `WshDescriptor` refuses one.
+    An unpickled ``multi()`` argument is refused for a field of the
+    wrong type and for its threshold as `WshDescriptor` says.
     """
 
     inner: Descriptor
@@ -1910,10 +1910,10 @@ class WshDescriptor(Descriptor):
     is refused with `MiniscriptDescriptor`'s message: an unpickled one
     skips that check of its own too.
 
-    A ``multi()`` argument whose keys are no tuple is refused as
-    `MultiDescriptor` refuses it, before its function: its text is
-    written with its keys, and an unpickled ``multi()`` skips that check
-    of its own.
+    An unpickled ``multi()`` argument skips its own check. A field of
+    the wrong type is refused first, as `_assert_multi_types` says, and
+    a threshold out of range whose text can be written in `parse`'s
+    order, as `_assert_embedded` says.
     """
 
     inner: Descriptor
@@ -2156,13 +2156,7 @@ class MultiDescriptor(Descriptor):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not is_integer(self.threshold):
-            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
-            raise BTClibTypeError(err_msg)
-        assert_type(self.keys, tuple, "keys")
-        for key in self.keys:
-            assert_type(key, KeyExpression, "key")
-        assert_type(self.sort, bool, "sort")
+        _assert_multi_types(self)
         name = "sortedmulti" if self.sort else "multi"
         _assert_uint32_threshold(name, self.threshold)
         if not self.keys:
@@ -2236,6 +2230,23 @@ class MultiDescriptor(Descriptor):
             err_msg = f"{len(found)} signatures of {self.threshold}, missing {missing}"
             raise BTClibValueError(err_msg)
         return [b"", *found[: self.threshold]]
+
+
+def _assert_multi_types(multi: MultiDescriptor) -> None:
+    """Refuse a field of a ``multi()`` of the wrong type.
+
+    The threshold, the keys, each key and the sort, in that order. An
+    unpickled ``multi()`` skips this check of its own, so `_assert_inner`
+    calls it too, before its function: `str` writes each field, and a
+    value of the wrong type need not write itself without raising.
+    """
+    if not is_integer(multi.threshold):
+        err_msg = f"invalid threshold type: {type(multi.threshold).__name__}"
+        raise BTClibTypeError(err_msg)
+    assert_type(multi.keys, tuple, "keys")
+    for key in multi.keys:
+        assert_type(key, KeyExpression, "key")
+    assert_type(multi.sort, bool, "sort")
 
 
 @dataclass(frozen=True)
@@ -2975,11 +2986,11 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
 
-    A ``multi()`` whose keys are no tuple is refused first, as
-    `MultiDescriptor` refuses it: `str` writes its keys.
+    A ``multi()`` holding a field of the wrong type is refused first, as
+    `_assert_multi_types` says.
     """
     if isinstance(inner, MultiDescriptor):
-        assert_type(inner.keys, tuple, "keys")
+        _assert_multi_types(inner)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
@@ -2994,11 +3005,16 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, a
-    ``multi()`` with no key, the number of keys of a ``multi()``, and
-    the size of its script, in `parse`'s order and with its messages:
-    key by key, each refused for its taproot spelling before its
-    compression. An unpickled argument skips its own check of the keys.
+    The threshold of a ``multi()`` that is negative or past 2**32-1, a
+    key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, a
+    ``multi()`` with no key, the number of keys of a ``multi()``, its k
+    outside 1 to n, and the size of its script, in `parse`'s order and
+    with its messages: key by key, each refused for its taproot spelling
+    before its compression, and a negative threshold as `parse` refuses
+    the ``-`` that `str` writes. An unpickled argument skips its own
+    check of the keys and of the threshold. A threshold of more digits
+    than Python writes as text is not reached: `_assert_inner` raises
+    Python's `ValueError` writing it.
     ``sh()`` and ``wsh()`` hold no key of their own, so a key's position
     in `inner`, counted as `_assert_keys` counts it, is the one `parse`
     names.
@@ -3020,15 +3036,29 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
 
     for key in inner.key_expressions:
         assert_type(key, KeyExpression, "key")
-    _assert_keys(inner.key_expressions, check)
     if isinstance(inner, MultiDescriptor):
-        name = str(inner).partition("(")[0]
-        if not inner.keys:
-            raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
-        _assert_multi_count(name, inner.keys)
-        _assert_multi_size(name, inner.keys, context)
-    elif isinstance(inner, RawDescriptor):
+        _assert_multi_embedded(inner, context, check)
+        return
+    _assert_keys(inner.key_expressions, check)
+    if isinstance(inner, RawDescriptor):
         _assert_raw_size(inner.script, context)
+
+
+def _assert_multi_embedded(
+    multi: MultiDescriptor, context: str, check: Callable[[KeyExpression], None]
+) -> None:
+    """Refuse a ``multi()`` as `_assert_embedded` says, `check` its keys."""
+    name = str(multi).partition("(")[0]
+    if multi.threshold < 0:
+        raise BTClibValueError(f"invalid {name}() threshold: digits expected")
+    _assert_uint32_threshold(name, multi.threshold)
+    _assert_keys(multi.key_expressions, check)
+    if not multi.keys:
+        raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
+    _assert_multi_count(name, multi.keys)
+    if not 1 <= multi.threshold <= len(multi.keys):
+        raise BTClibValueError(f"invalid k in k-of-n {name}: {multi.threshold}")
+    _assert_multi_size(name, multi.keys, context)
 
 
 def _function_read(text: str) -> str | None:
