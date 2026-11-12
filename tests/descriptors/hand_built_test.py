@@ -157,6 +157,17 @@ unpickled `MiniscriptDescriptor`. Issue btclib-org/bip32-descriptors#285.
 subexpressions are no tuple, naming the type alone, after its context
 and fragment and before its keys, as its build refuses it. Issue
 btclib-org/bip32-descriptors#287.
+
+`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor` and
+`ShDescriptor` refuse an unpickled node whose type and bounds are not
+those its build computes from its subexpressions, before its sanity is
+asked. A node left to those checks for its number of keys, as above, is
+asked, and so are the nodes above it, unless it is a multisig. Issue
+btclib-org/bip32-descriptors#286.
+
+Before its type and bounds, a node is refused for a threshold or a lock
+time out of range or of another type, with the message of its own
+build. Issue btclib-org/bip32-descriptors#284.
 """
 
 from __future__ import annotations
@@ -4053,3 +4064,275 @@ def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
         inner = _unpickled_wsh(inner)
     with pytest.raises(BTClibTypeError, match=err_msg):
         (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
+
+
+def _forged_and_v(context: str, *, forged: bool) -> miniscript.Miniscript:
+    """Return an unpickled ``and_v(v:pk(KEY),pk(KEY))`` of the context.
+
+    Where `forged`, its first subexpression is an ``older(2)``, which is B
+    and not V, and the ``and_v`` keeps the type, size and bounds it was
+    built with, as unpickling copies them.
+    """
+    first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
+    expression = f"and_v(v:pk({first}),pk({second}))"
+    root = _unpickled(miniscript.parse(expression, context))
+    if forged:
+        older = miniscript.parse("older(2)", context)
+        object.__setattr__(root, "subs", (older, root.subs[1]))
+    return root
+
+
+def _wrapped_forged_and_v(wrapped: str, *, forged: bool) -> Descriptor:
+    """Return the descriptor `_WRAPPED` names, of `_forged_and_v`'s node.
+
+    As `_outermost` builds it.
+    """
+    context, _ = _WRAPPED[wrapped]
+    return _outermost(wrapped, _forged_and_v(context, forged=forged))
+
+
+def _outermost(wrapped: str, root: miniscript.Miniscript) -> Descriptor:
+    """Return the descriptor `_WRAPPED` names, of the node.
+
+    A ``wsh()`` holds an unpickled `MiniscriptDescriptor`, and an
+    ``sh()`` an unpickled ``wsh()`` of one, so that only the outermost
+    build asks the node.
+    """
+    _, wrap = _WRAPPED[wrapped]
+    if wrapped in {"tr", "bare"}:
+        return wrap(root)
+    parsed = cast("WshDescriptor", _MINISCRIPT).inner
+    inner: MiniscriptDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(inner, "node", root)
+    if wrapped == "wsh":
+        return WshDescriptor(inner)
+    return ShDescriptor(_unpickled_wsh(inner))
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_its_subexpressions_do_not_type_is_refused(
+    wrapped: str,
+) -> None:
+    """For the type and bounds it holds, which its build does not compute.
+
+    `parse` refuses its text as ill-typed. The control: the node before
+    its subexpression is replaced builds, unpickled as it is. Issue
+    btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    built = _wrapped_forged_and_v(wrapped, forged=False)
+    if wrapped != "bare":
+        assert parse(str(built)) == built
+        root = _forged_and_v(context, forged=True)
+        with pytest.raises(
+            BTClibValueError, match="^ill-typed miniscript: and_v over "
+        ):
+            parse(_TEMPLATES[wrapped].format(root))
+    err_msg = "^and_v holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _wrapped_forged_and_v(wrapped, forged=True)
+
+
+# the fields `Miniscript` computes when built
+_DERIVED_FIELDS = [each.name for each in fields(miniscript.Miniscript) if not each.init]
+
+
+@pytest.mark.parametrize("stale", ["and_v", "older"])
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_node_beside_an_uncompressed_key_is_asked_its_type_and_bounds(
+    wrapped: str, stale: str
+) -> None:
+    """Where the ``older(2)`` of `_forged_and_v` holds an uncompressed key.
+
+    Its text does not write the key, and `_assert_key_numbers` leaves it
+    to the checks that follow. Where `stale` is ``older``, it holds the
+    type and bounds of the ``v:pk()`` it replaces, which the ``and_v``
+    was built from. ``wsh()`` refuses the key first, by its position.
+    Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    root = _forged_and_v(context, forged=True)
+    older = root.subs[0]
+    object.__setattr__(older, "keys", (_U_KEY,))
+    if stale == "older":
+        v_pk = _forged_and_v(context, forged=False).subs[0]
+        for name in _DERIVED_FIELDS:
+            object.__setattr__(older, name, getattr(v_pk, name))
+    if wrapped in {"wsh", "sh-wsh"}:
+        err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    else:
+        err_msg = f"^{stale} holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
+
+
+@pytest.mark.parametrize("field", ["properties", "script_size"])
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_above_a_multisig_of_no_key_is_not_asked_its_type_and_bounds(
+    wrapped: str, field: str
+) -> None:
+    """Where the multisig holds a field of the wrong type, and no key.
+
+    An ``older(2)`` beside it holds an uncompressed key, so
+    `_assert_key_numbers` leaves the multisig to the checks that follow.
+    What its build computes reads its number of keys, which no build
+    takes, so neither it nor the ``and_v`` above it is asked: ``tr()``
+    refuses the key by its position, and a bare `MiniscriptDescriptor`
+    builds it. Issue btclib-org/bip32-descriptors#286.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    fragment, own = (
+        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    )
+    expression = f"and_v(v:{fragment}(1,{own[0]},{own[1]}),older(2))"
+    root = _unpickled(miniscript.parse(expression, context))
+    multisig = _node_at(root, (0, 0))
+    object.__setattr__(multisig, "keys", ())
+    object.__setattr__(multisig, field, None)
+    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    if wrapped == "tr":
+        with pytest.raises(BTClibValueError, match=f"^key 1: {_UNCOMPRESSED_HERE}$"):
+            wrap(root)
+    else:
+        assert str(wrap(root)) == str(root)
+
+
+@pytest.mark.parametrize("name", _DERIVED_FIELDS)
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_above_a_multisig_of_no_key_is_refused_lacking_a_field(
+    wrapped: str, name: str
+) -> None:
+    """Though it is not asked its type and bounds, as the test above says.
+
+    Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    fragment, own = (
+        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    )
+    expression = f"and_v(v:{fragment}(1,{own[0]},{own[1]}),older(2))"
+    root = _unpickled(miniscript.parse(expression, context))
+    object.__setattr__(_node_at(root, (0, 0)), "keys", ())
+    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    object.__delattr__(root, name)
+    err_msg = "^and_v holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
+
+
+@pytest.mark.parametrize(
+    "threshold, refusal",
+    [
+        (0, BTClibValueError("invalid thresh() threshold: 0 of 2")),
+        (3, BTClibValueError("invalid thresh() threshold: 3 of 2")),
+        ("2", BTClibTypeError("invalid threshold type: str")),
+    ],
+)
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_above_a_multisig_of_no_key_is_refused_for_its_threshold(
+    wrapped: str, threshold: object, refusal: Exception
+) -> None:
+    """With its build's message, though it is not asked its type and bounds.
+
+    Issue btclib-org/bip32-descriptors#284.
+    """
+    context, _ = _WRAPPED[wrapped]
+    fragment, own = (
+        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    )
+    expression = f"thresh(1,{fragment}(1,{own[0]},{own[1]}),s:pk({own[2]}))"
+    root = _unpickled(miniscript.parse(expression, context))
+    object.__setattr__(_node_at(root, (0,)), "keys", ())
+    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    object.__setattr__(root, "threshold", threshold)
+    with pytest.raises(type(refusal), match=f"^{re.escape(str(refusal))}$"):
+        _outermost(wrapped, root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_of_more_subexpressions_than_it_takes_is_refused(
+    wrapped: str,
+) -> None:
+    """With its build's message, before its type and bounds are asked.
+
+    Its text writes the subexpressions its fragment takes, and not the
+    one more. Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    root = _forged_and_v(context, forged=False)
+    object.__setattr__(root, "subs", (*root.subs, root.subs[1]))
+    err_msg = "^and_v takes 2 subexpressions, 3 given$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
+
+
+_THRESH_TEXT = "thresh(2,pk({}),s:pk({}))"
+_OLDER_TEXT = "and_v(v:pk({}),and_v(v:pk({}),older(1)))"
+_AFTER_TEXT = "and_v(v:pk({}),and_v(v:pk({}),after(1)))"
+# (an expression of two keys, the path to the node given `threshold`, and
+# the refusal `Miniscript._assert_number` gives)
+_THRESHOLD_FAULTS: dict[str, tuple[str, tuple[int, ...], object, Exception]] = {
+    "thresh-3-of-2": (
+        _THRESH_TEXT,
+        (),
+        3,
+        BTClibValueError("invalid thresh() threshold: 3 of 2"),
+    ),
+    "thresh-0": (
+        _THRESH_TEXT,
+        (),
+        0,
+        BTClibValueError("invalid thresh() threshold: 0 of 2"),
+    ),
+    "thresh-str": (
+        _THRESH_TEXT,
+        (),
+        "2",
+        BTClibTypeError("invalid threshold type: str"),
+    ),
+    "older-0": (_OLDER_TEXT, (1, 1), 0, BTClibValueError("invalid older() value: 0")),
+    "older-2**31": (
+        _OLDER_TEXT,
+        (1, 1),
+        2**31,
+        BTClibValueError("invalid older() value: 2147483648"),
+    ),
+    "after-0": (_AFTER_TEXT, (1, 1), 0, BTClibValueError("invalid after() value: 0")),
+}
+
+
+@pytest.mark.parametrize("fault", _THRESHOLD_FAULTS)
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_of_a_threshold_its_fragment_does_not_take_is_refused(
+    wrapped: str, fault: str
+) -> None:
+    """With its build's message, before its type and bounds are asked.
+
+    Issues btclib-org/bip32-descriptors#284 and
+    btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    expression, path, threshold, refusal = _THRESHOLD_FAULTS[fault]
+    first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
+    root = _unpickled(miniscript.parse(expression.format(first, second), context))
+    object.__setattr__(_node_at(root, path), "threshold", threshold)
+    with pytest.raises(type(refusal), match=f"^{re.escape(str(refusal))}$"):
+        _outermost(wrapped, root)
+
+
+@pytest.mark.parametrize("name", _DERIVED_FIELDS)
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_lacking_a_field_its_build_computes_is_refused(
+    wrapped: str, name: str
+) -> None:
+    """As one holding a type or bounds its build does not compute.
+
+    A stream can leave a field out, and unpickling then leaves it unset.
+    Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    root = _forged_and_v(context, forged=False)
+    object.__delattr__(root.subs[1], name)
+    err_msg = "^c: holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
