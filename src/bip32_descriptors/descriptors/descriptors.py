@@ -246,6 +246,7 @@ from bip32_descriptors.descriptors.miniscript import (
     Miniscript,
     Preimages,
     SpendContext,
+    _assert_derived,
     _assert_fragment_type,
     _assert_key_number,
     _assert_sane,
@@ -516,10 +517,9 @@ class MultiA:
             _assert_compressed(key)
             _assert_point(key)
         name = "sortedmulti_a" if self.sort else "multi_a"
+        _assert_multi_a_count(name, self.keys)
         if not 1 <= self.threshold <= len(self.keys):
             raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
-        if len(self.keys) > _MAX_MULTI_A_KEYS:
-            raise BTClibValueError(f"invalid n in k-of-n {name}: {len(self.keys)}")
 
     @override
     def __str__(self) -> str:
@@ -787,14 +787,14 @@ def _assert_key_numbers(
     define is refused by that walk first.
 
     Where `keys` hold an uncompressed one, in that node or any other, it
-    is left to the checks that follow: the text and the sanity of what
-    holds it, then the key check of ``tr()`` or ``wsh()``, which names the
-    first such key by its position there, counted as `_assert_keys`
-    counts it: every key of each node counts, not only those its text
-    writes. A bare `MiniscriptDescriptor` that passes its other checks
-    builds it. A ``pk_k`` or ``pk_h`` holding no key, which has no text to
-    write, is not left so. A node not left so is refused for its number
-    of keys.
+    is left to the checks that follow: the text of what holds it, the type
+    and bounds of its nodes as `_assert_derived` says, and its sanity, then
+    the key check of ``tr()`` or ``wsh()``, which names the first such key
+    by its position there, counted as `_assert_keys` counts it: every key
+    of each node counts, not only those its text writes. A bare
+    `MiniscriptDescriptor` that passes its other checks builds it. A
+    ``pk_k`` or ``pk_h`` holding no key, which has no text to write, is not
+    left so. A node not left so is refused for its number of keys.
     """
     uncompressed = not all(key.is_compressed for key in keys)
     stack = list(roots)
@@ -842,8 +842,9 @@ def _tapscript_node(node: object) -> Miniscript:
     only the library's own context is named, a refusal echoing no value
     it holds. Once its context passes, its fragment is refused as
     `_assert_fragment_type` says, and then as `_assert_known_fragment`
-    says. Its keys are then refused as `_assert_key_types` says, and a
-    ``multi()`` for its context, as `Miniscript` refuses it when built.
+    says. Its subexpressions are then refused where they are no tuple,
+    its keys as `_assert_key_types` says, and a ``multi()`` for its
+    context, as `Miniscript` refuses it when built.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -854,6 +855,7 @@ def _tapscript_node(node: object) -> Miniscript:
         raise BTClibValueError(err_msg)
     _assert_fragment_type(node.fragment)
     _assert_known_fragment(node)
+    assert_type(node.subs, tuple, "subs")
     _assert_key_types(node)
     if node.fragment == "multi":
         raise BTClibValueError(_multisig_context_fault("multi"))
@@ -897,7 +899,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     non-empty signature satisfies.
 
     A miniscript node of that context is then refused for its fragment,
-    before its keys are read, as `_tapscript_node` says.
+    as `_tapscript_node` says, and then where its subexpressions are not
+    a tuple, as its build refuses them, before its keys are read.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says. A
@@ -910,7 +913,10 @@ def _assert_tree(tree: DescriptorTree) -> None:
     says. It is then refused where `parse` reads its text as a function,
     such as ``pk()`` or ``multi_a()``, or would refuse it without
     `prv_keys`: either way the descriptor would not parse back from its
-    text. A key that is no point is left to `_assert_keys`.
+    text. Before its sanity is asked, it is refused where a node holds a
+    type or bounds its build does not compute, as `_assert_derived` says,
+    since the sanity check reads them. A key that is no point is left to
+    `_assert_keys`.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -941,6 +947,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
             err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
             raise BTClibValueError(err_msg)
         if not _SANE_BY_PARSE.get():
+            _assert_derived(leaf)
             _assert_sane_script(leaf)
 
 
@@ -1946,19 +1953,20 @@ class WshDescriptor(Descriptor):
     skips its own check, and what it holds need not be written without
     raising.
 
-    A miniscript argument is refused before its text is written: for
-    its nodes as `MiniscriptDescriptor` refuses them, their type,
-    context, fragment and the type of their keys, and a ``multi_a()``
-    node for its context, then for its keys as above, then for a node
-    holding a number of keys its fragment does not take, with
+    A miniscript argument is refused before its text is written: for its
+    nodes as `MiniscriptDescriptor` refuses them, their type, context,
+    fragment, the type of their subexpressions and that of their keys, and
+    a ``multi_a()`` node for its context, then for its keys as above, then
+    for a node holding a number of keys its fragment does not take, with
     `MiniscriptDescriptor`'s message, as `parse` reads the keys of a node
     before it counts them. An unpickled one skips its own check, and its
     text need not be written without raising.
 
     Once those pass, a miniscript argument whose text `parse` reads as a
-    descriptor function, such as ``pk()``, and then one that is not sane,
-    is refused with `MiniscriptDescriptor`'s message: an unpickled one
-    skips that check of its own too.
+    descriptor function, such as ``pk()``, then one a node of which holds
+    a type or bounds its build does not compute, and then one that is not
+    sane, is refused with `MiniscriptDescriptor`'s message: an unpickled
+    one skips that check of its own too.
 
     An unpickled ``multi()`` argument skips its own check. A field of
     the wrong type is refused as `_assert_multi_types` says, and a
@@ -2054,8 +2062,9 @@ def _assert_p2wsh(node: Miniscript) -> None:
 
     A node is refused first where it is no `Miniscript`, and, once its
     context passes, where `_assert_fragment_type` refuses its fragment,
-    and then where `_assert_known_fragment` does, before its keys are
-    read.
+    and then where `_assert_known_fragment` does, then where its
+    subexpressions are not a tuple, as its build refuses them, before its
+    keys are read.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says. A ``multi_a()`` node is then
@@ -2073,6 +2082,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             raise BTClibValueError(err_msg)
         _assert_fragment_type(sub.fragment)
         _assert_known_fragment(sub)
+        assert_type(sub.subs, tuple, "subs")
         _assert_key_types(sub)
         if sub.fragment == "multi_a":
             raise BTClibValueError(_multisig_context_fault("multi_a"))
@@ -2084,14 +2094,18 @@ def _assert_miniscript_read(node: Miniscript) -> None:
 
     One whose text `parse` reads as a descriptor function, such as
     ``pk()``, and one `parse` refuses where not sane, unless its sanity
-    was asked already, as `_SANE_BY_PARSE` says. The last two checks of
-    `MiniscriptDescriptor`; `WshDescriptor` says when ``wsh()`` runs them.
+    was asked already, as `_SANE_BY_PARSE` says. Before its sanity is
+    asked, one a node of which holds a type or bounds its build does not
+    compute, as `_assert_derived` says, since the sanity check reads them.
+    The last checks of `MiniscriptDescriptor`; `WshDescriptor` says when
+    ``wsh()`` runs them.
     """
     name = _function_read(str(node))
     if name is not None:
         err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
         raise BTClibValueError(err_msg)
     if not _SANE_BY_PARSE.get():
+        _assert_derived(node)
         _assert_sane_script(node)
 
 
@@ -2125,6 +2139,14 @@ class MiniscriptDescriptor(Descriptor):
     unless the miniscript holds an uncompressed key and the node's text
     can be written: the node is then left to the text and sanity checks
     above, and the key to ``wsh()``, which refuses it by its position.
+
+    A node holding a type or bounds its build does not compute, as an
+    unpickled one can, is refused before the sanity check reads them, and
+    so is one of more subexpressions than its fragment takes, or of a
+    threshold or lock time its fragment does not take, of another type
+    included. A multisig node left as the paragraph above says is not
+    asked, and the nodes above it are asked only as `_assert_derived`
+    says.
 
     `parse` takes one only inside ``wsh()``. The refusal of a top-level one
     is `parse`'s alone: the build cannot know whether the value will be
@@ -3218,10 +3240,9 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
         ),
     )
     _assert_multisig_end(name, text, args)
+    _assert_multi_a_count(name, keys)
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
-    if len(keys) > _MAX_MULTI_A_KEYS:
-        raise BTClibValueError(f"invalid n in k-of-n {name}: {len(keys)}")
     _assert_multipath_keys(lengths)
     return MultiA(threshold, keys, sort=name == "sortedmulti_a")
 
@@ -3557,6 +3578,16 @@ def _assert_multi_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
     if len(keys) > MAX_PUBKEYS_PER_MULTISIG:
         err_msg = f"{name}() takes at most {MAX_PUBKEYS_PER_MULTISIG} keys"
         raise BTClibValueError(f"{err_msg}, {len(keys)} given")
+
+
+def _assert_multi_a_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
+    """Refuse a ``multi_a()`` of more keys than BIP387 allows.
+
+    Bitcoin Core counts the keys before it checks the threshold, so a leaf
+    of too many keys is refused for its count whatever its threshold is.
+    """
+    if len(keys) > _MAX_MULTI_A_KEYS:
+        raise BTClibValueError(f"invalid n in k-of-n {name}: {len(keys)}")
 
 
 def _assert_multi_size(
