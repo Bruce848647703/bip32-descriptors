@@ -73,16 +73,17 @@ the message `parse` gives inside ``sh()``: more than three keys, one of
 them uncompressed, whose redeem script is over the push limit of
 ``sh()``. Issue btclib-org/bip32-descriptors#251.
 
+`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor`, and
+`ShDescriptor` for a ``wsh()`` argument, refuse an unpickled node holding
+a number of subexpressions its fragment does not take, with the node's
+own message, before its text is written: after its context and its
+fragment, before its keys. Issue btclib-org/bip32-descriptors#275.
+
 `TrDescriptor` refuses an unpickled ``multi()`` in a tapscript leaf, and
 `MiniscriptDescriptor`, `WshDescriptor` and `ShDescriptor` for a
 ``wsh()`` argument an unpickled ``multi_a()``, as the node's own build
 refuses it: whatever its number of keys, after the type of its keys, and
 with its message. Issue btclib-org/bip32-descriptors#243.
-
-`TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor` and `ShDescriptor`
-for a ``wsh()`` argument refuse an unpickled node whose number of
-subexpressions its fragment does not take, before its keys are read.
-Issue btclib-org/bip32-descriptors#275.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
@@ -3561,6 +3562,27 @@ def test_an_unpickled_multisig_of_the_other_context_is_refused(
 
 
 @pytest.mark.parametrize("wrapped", _OTHER_MULTISIG)
+def test_a_multisig_of_the_other_context_is_refused_for_its_subexpressions_first(
+    wrapped: str,
+) -> None:
+    """As the node's own build refuses it, which counts them before its keys.
+
+    Issue btclib-org/bip32-descriptors#275.
+    """
+    context, fragment, wrap = _OTHER_MULTISIG[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _holding(fragment, context, own[:3])
+    node = _node_at(root, _HOLDING[fragment][3])
+    subs = (miniscript.parse("older(1)", context),)
+    err_msg = f"^{fragment} takes 0 subexpressions, 1 given$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(node, subs=subs)
+    object.__setattr__(node, "subs", subs)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+
+
+@pytest.mark.parametrize("wrapped", _OTHER_MULTISIG)
 @pytest.mark.parametrize("as_list", [True, False], ids=["keys-list", "key-none"])
 def test_a_multisig_of_the_other_context_is_refused_after_the_type_of_its_keys(
     as_list: bool, wrapped: str
@@ -4154,6 +4176,44 @@ def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
         (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
 
 
+# a fragment of each number of subexpressions, in an expression with the
+# path to its node
+_SUB_NUMBERS: dict[str, tuple[str, tuple[int, ...]]] = {
+    "older": ("and_v(v:pk({}),older(1))", (1,)),
+    "v": ("and_v(v:pk({}),pk({}))", (0,)),
+    "and_v": ("and_v(v:pk({}),pk({}))", ()),
+    "andor": ("andor(pk({}),older(1),pk({}))", ()),
+    "thresh": ("thresh(1,pk({}),s:pk({}))", ()),
+}
+# each fragment and the subexpressions it is given that it does not take
+_SUB_NUMBER_FAULTS = [
+    ("older", "more"),
+    ("older", "no-node"),
+    ("v", "none"),
+    ("v", "more"),
+    ("and_v", "none"),
+    ("and_v", "fewer"),
+    ("and_v", "more"),
+    ("andor", "none"),
+    ("andor", "fewer"),
+    ("andor", "more"),
+    ("thresh", "none"),
+]
+
+
+def _faulty_subs(
+    subs: tuple[miniscript.Miniscript, ...], fault: str, context: str
+) -> tuple[object, ...]:
+    """Return `subs` with `fault`: none, one fewer, one more, or no node."""
+    if fault == "none":
+        return ()
+    if fault == "fewer":
+        return subs[:-1]
+    if fault == "more":
+        return (*subs, miniscript.parse("older(2)", context))
+    return (*subs, "not a node")
+
+
 def _forged_and_v(context: str, *, forged: bool) -> miniscript.Miniscript:
     """Return an unpickled ``and_v(v:pk(KEY),pk(KEY))`` of the context.
 
@@ -4197,6 +4257,110 @@ def _outermost(wrapped: str, root: miniscript.Miniscript) -> Descriptor:
     return ShDescriptor(_unpickled_wsh(inner))
 
 
+@pytest.mark.parametrize("wrapped", ["tr", "bare", "wsh", "sh-wsh"])
+@pytest.mark.parametrize(
+    "fragment,fault",
+    _SUB_NUMBER_FAULTS,
+    ids=[f"{fragment}-{fault}" for fragment, fault in _SUB_NUMBER_FAULTS],
+)
+def test_a_node_holding_a_number_of_subexpressions_it_does_not_take_is_refused(
+    fragment: str, fault: str, wrapped: str
+) -> None:
+    """With the message the node's own build gives, before its text is written.
+
+    An unpickled node skips that check of its own. Issue
+    btclib-org/bip32-descriptors#275.
+    """
+    context = _TAPSCRIPT if wrapped == "tr" else _P2WSH
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    expression, path = _SUB_NUMBERS[fragment]
+    root = _unpickled(miniscript.parse(expression.format(*own[:2]), context))
+    node = _node_at(root, path)
+    subs = _faulty_subs(node.subs, fault, context)
+    with pytest.raises(BTClibValueError) as built:
+        replace(node, subs=cast("tuple[miniscript.Miniscript, ...]", subs))
+    object.__setattr__(node, "subs", subs)
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(str(built.value))}$"):
+        _outermost(wrapped, root)
+
+
+# a field given to a node beside a node holding too few subexpressions,
+# its value in each context, and its refusal
+_BESIDE_THE_SUB_NUMBER: dict[
+    str, tuple[str, Callable[[str], object], type[Exception], str]
+] = {
+    "context": (
+        "context",
+        lambda c: _P2WSH if c == _TAPSCRIPT else _TAPSCRIPT,
+        BTClibValueError,
+        "not a {kind} node: {fragment} in {value}",
+    ),
+    "fragment": (
+        "fragment",
+        lambda _: None,
+        BTClibTypeError,
+        "invalid fragment type: NoneType",
+    ),
+    "key-type": (
+        "keys",
+        lambda _: ("not a key",),
+        BTClibTypeError,
+        "invalid key type: str",
+    ),
+    "key-number": (
+        "keys",
+        lambda c: (_X_KEYS if c == _TAPSCRIPT else _C_KEYS)[2:4],
+        BTClibValueError,
+        "invalid number of keys in {fragment}: 2",
+    ),
+}
+# where each of them is named before the number of subexpressions
+_NAMED_BEFORE_THE_SUB_NUMBER = {
+    ("same", "context"),
+    ("same", "fragment"),
+    ("walked-first", "context"),
+    ("walked-first", "fragment"),
+    ("walked-first", "key-type"),
+}
+
+
+@pytest.mark.parametrize("wrapped", ["tr", "bare", "wsh", "sh-wsh"])
+@pytest.mark.parametrize("where", ["same", "walked-first", "walked-later"])
+@pytest.mark.parametrize("fault", _BESIDE_THE_SUB_NUMBER)
+def test_a_node_s_number_of_subexpressions_is_refused_in_the_walk_s_order(
+    fault: str, where: str, wrapped: str
+) -> None:
+    """After its context and its fragment's type, before its keys.
+
+    A fault the walk checks on another node it reaches first is named
+    first: its context, its fragment's type and its keys' type. A number
+    of keys, and a key refused for its position, are read once the walk
+    is done. Issue btclib-org/bip32-descriptors#275.
+    """
+    context = _TAPSCRIPT if wrapped == "tr" else _P2WSH
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    # the walk reaches the last subexpression of a node first
+    if where == "walked-later":
+        expression, path, other = "or_i(pk({}),and_v(v:pk({}),pk({})))", (1,), (0, 0)
+    else:
+        expression, path, other = "or_i(and_v(v:pk({}),pk({})),pk({}))", (0,), (1, 0)
+    root = _unpickled(miniscript.parse(expression.format(*own[:3]), context))
+    node = _node_at(root, path)
+    object.__setattr__(node, "subs", node.subs[:1])
+    field, value, error, refusal = _BESIDE_THE_SUB_NUMBER[fault]
+    faulty = node if where == "same" else _node_at(root, other)
+    refusal = refusal.format(
+        kind="tapscript" if context == _TAPSCRIPT else "P2WSH",
+        fragment=faulty.fragment,
+        value=value(context),
+    )
+    object.__setattr__(faulty, field, value(context))
+    if (where, fault) not in _NAMED_BEFORE_THE_SUB_NUMBER:
+        error, refusal = BTClibValueError, "and_v takes 2 subexpressions, 1 given"
+    with pytest.raises(error, match=f"^{re.escape(refusal)}$"):
+        _outermost(wrapped, root)
+
+
 @pytest.mark.parametrize("wrapped", _WRAPPED)
 def test_an_unpickled_node_its_subexpressions_do_not_type_is_refused(
     wrapped: str,
@@ -4219,50 +4383,6 @@ def test_an_unpickled_node_its_subexpressions_do_not_type_is_refused(
     err_msg = "^and_v holds a type or bounds its build does not compute$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _wrapped_forged_and_v(wrapped, forged=True)
-
-
-@pytest.mark.parametrize("wrapped", _WRAPPED)
-def test_an_unpickled_node_of_the_wrong_arity_is_refused(wrapped: str) -> None:
-    """Refused before any text is written. Issue #275."""
-    context, _ = _WRAPPED[wrapped]
-    first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
-    root = _unpickled(miniscript.parse(f"and_v(v:pk({first}),pk({second}))", context))
-    object.__setattr__(root, "subs", root.subs[:1])
-    with pytest.raises(
-        BTClibValueError, match="^and_v takes 2 subexpressions, 1 given$"
-    ):
-        _outermost(wrapped, root)
-
-
-@pytest.mark.parametrize("wrapped", _WRAPPED)
-def test_an_unpickled_descendant_of_the_wrong_arity_is_refused(
-    wrapped: str,
-) -> None:
-    """A valid root with a malformed child, in both contexts. Issue #275."""
-    context, _ = _WRAPPED[wrapped]
-    first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
-    root = _unpickled(
-        miniscript.parse(
-            f"and_v(v:pk({first}),and_v(v:pk({second}),pk({first})))",
-            context,
-        )
-    )
-    child = root.subs[1]
-    object.__setattr__(child, "subs", child.subs[:1])
-    with pytest.raises(
-        BTClibValueError, match="^and_v takes 2 subexpressions, 1 given$"
-    ):
-        _outermost(wrapped, root)
-
-
-def test_an_unpickled_thresh_without_subexpressions_is_refused() -> None:
-    """The empty threshold is refused by the same rule. Issue #275."""
-    root = _unpickled(miniscript.parse(f"thresh(1,pk({_C}),s:pk({_C2}))", _P2WSH))
-    object.__setattr__(root, "subs", ())
-    with pytest.raises(
-        BTClibValueError, match="^thresh\\(\\) takes at least one subexpression$"
-    ):
-        _outermost("wsh", root)
 
 
 # the fields `Miniscript` computes when built
@@ -4378,23 +4498,6 @@ def test_a_node_above_a_multisig_of_no_key_is_refused_for_its_threshold(
     object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
     object.__setattr__(root, "threshold", threshold)
     with pytest.raises(type(refusal), match=f"^{re.escape(str(refusal))}$"):
-        _outermost(wrapped, root)
-
-
-@pytest.mark.parametrize("wrapped", _WRAPPED)
-def test_an_unpickled_node_of_more_subexpressions_than_it_takes_is_refused(
-    wrapped: str,
-) -> None:
-    """With its build's message, before its type and bounds are asked.
-
-    Its text writes the subexpressions its fragment takes, and not the
-    one more. Issue btclib-org/bip32-descriptors#286.
-    """
-    context, _ = _WRAPPED[wrapped]
-    root = _forged_and_v(context, forged=False)
-    object.__setattr__(root, "subs", (*root.subs, root.subs[1]))
-    err_msg = "^and_v takes 2 subexpressions, 3 given$"
-    with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
 
 
