@@ -9,6 +9,9 @@ a subexpression whose context is not the node's. The first two are any
 value a caller passes, so the refusal names none of it. Issues
 btclib-org/bip32-descriptors#120, btclib-org/bip32-descriptors#130 and
 btclib-org/bip32-descriptors#133.
+
+Subexpressions given as no tuple, naming the type alone. Issue
+btclib-org/bip32-descriptors#287.
 """
 
 from __future__ import annotations
@@ -87,6 +90,45 @@ def test_a_context_of_another_type_is_refused(
     with pytest.raises(BTClibTypeError, match=err_msg) as e:
         replace(node, context=context)
     assert_secret_free(e.value, [spelling])
+
+
+# subexpressions of types other than a tuple, and the spelling of each a
+# refusal could print; unrefused, the list of a node builds
+@pytest.mark.parametrize(
+    "fragment,subs,spelling",
+    [
+        ("and_v", 770907403214864877517, "770907403214864877517"),
+        ("and_v", None, _RANDOM_HEX),
+        ("and_v", _RANDOM_HEX, _RANDOM_HEX),
+        ("and_v", bytes.fromhex(_RANDOM_HEX), bytes.fromhex(_RANDOM_HEX)),
+        ("v:", [parse_miniscript("older(1)")], _RANDOM_HEX),
+        ("and_v", [_RANDOM_HEX], _RANDOM_HEX),
+    ],
+    ids=["int", "None", "str", "bytes", "list", "list of text"],
+)
+def test_subexpressions_of_another_type_are_refused(
+    fragment: str, subs: Any, spelling: str | bytes
+) -> None:
+    """They are a tuple, and the refusal names the type alone.
+
+    After the fragment's type and value, a ``thresh()`` included, and
+    before the keys. Issue btclib-org/bip32-descriptors#287.
+    """
+    err_msg = f"^invalid subs type: {type(subs).__name__}$"
+    no_keys: tuple[Any, ...] = ()
+    for keys in (no_keys, ("abc",)):
+        with pytest.raises(BTClibTypeError, match=err_msg) as e:
+            Miniscript(fragment, P2WSH, subs, keys)
+        assert_secret_free(e.value, [spelling])
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        Miniscript("thresh", P2WSH, subs, threshold=1)
+    with pytest.raises(BTClibTypeError, match="^invalid fragment type: int$"):
+        Miniscript(5, P2WSH, subs)  # type: ignore[arg-type]
+    with pytest.raises(
+        BTClibValueError, match="^unknown miniscript fragment$"
+    ) as unknown:
+        Miniscript(_RANDOM_HEX, P2WSH, subs)
+    assert_secret_free(unknown.value, [_RANDOM_HEX])
 
 
 def test_a_p2wsh_node_of_a_tapscript_subexpression_is_refused() -> None:

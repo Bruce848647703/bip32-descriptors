@@ -3586,6 +3586,28 @@ def test_too_many_keys_for_a_multi_a() -> None:
 
 
 @pytest.mark.parametrize("name", ["multi_a", "sortedmulti_a"])
+@pytest.mark.parametrize("threshold", [0, 1001], ids=["zero", "above-key-count"])
+def test_a_multi_a_of_1000_keys_is_refused_for_its_count_before_its_threshold(
+    name: str, threshold: int
+) -> None:
+    """Refuse 1000 keys as `_assert_multi_a_count` says, at parse and build.
+
+    With the 999 keys BIP387 allows, the same threshold is refused as k.
+    """
+    too_many = ",".join([XONLY] * 1000)
+    count_err = rf"^invalid n in k-of-n {name}: 1000$"
+    with pytest.raises(BTClibValueError, match=count_err):
+        parse(f"tr({XONLY},{name}({threshold},{too_many}))")
+    (key,) = parse(f"tr({XONLY})").key_expressions
+    with pytest.raises(BTClibValueError, match=count_err):
+        MultiA(threshold, (key,) * 1000, sort=name == "sortedmulti_a")
+    allowed = ",".join([XONLY] * 999)
+    threshold_err = rf"^invalid k in k-of-n {name}: {threshold}$"
+    with pytest.raises(BTClibValueError, match=threshold_err):
+        parse(f"tr({XONLY},{name}({threshold},{allowed}))")
+
+
+@pytest.mark.parametrize("name", ["multi_a", "sortedmulti_a"])
 @pytest.mark.parametrize("threshold", [0, 3], ids=["zero", "above-key-count"])
 def test_an_impossible_multi_a_threshold_is_refused_at_parse_and_at_build(
     name: str, threshold: int
